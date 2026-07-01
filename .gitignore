@@ -1,0 +1,28 @@
+# 报告输出（体积大，不含入仓库）
+taobao-reports/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Excel 临时文件
+~$*.xlsx
+
+# 用户本地配置
+.env
+.mcp.json
+
+# 临时数据
+*.tmp
+temp/
