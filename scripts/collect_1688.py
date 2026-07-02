@@ -11,7 +11,26 @@
   4. 保存为 data_1688.json
 """
 
-import subprocess, json, sys, os, time, re
+import subprocess, json, sys, os, time, re, shutil
+
+# 自动定位 bb-browser
+BB_BROWSER = shutil.which('bb-browser') or shutil.which('bb-browser.cmd')
+if not BB_BROWSER:
+    npm_global = os.path.expandvars(r'%APPDATA%\npm')
+    for name in ['bb-browser', 'bb-browser.cmd', 'bb-browser.ps1']:
+        p = os.path.join(npm_global, name)
+        if os.path.exists(p): BB_BROWSER = p; break
+if not BB_BROWSER:
+    print("错误: 找不到 bb-browser, 请先安装: npm install -g bb-browser")
+    sys.exit(1)
+
+def bb(*args):
+    try:
+        r = subprocess.run([BB_BROWSER] + list(args), capture_output=True, encoding='utf-8', errors='replace')
+        return r
+    except Exception as e:
+        print(f"  bb-browser error: {e}")
+        return None
 
 def main():
     if len(sys.argv) < 2:
@@ -26,13 +45,12 @@ def main():
 
     print(f"[1/4] 打开1688搜索: {keyword}")
     # 打开1688搜索
-    from urllib.parse import quote
-    url = f'https://s.1688.com/selloffer/offer_search.htm?keywords={quote(keyword)}'
+    url = f'https://s.1688.com/selloffer/offer_search.htm?keywords={keyword}'
 
     if tab_id:
-        result = subprocess.run(['bb-browser', 'goto', url, '--tab', tab_id], capture_output=True, text=True)
+        result = bb('goto', url, '--tab', tab_id)
     else:
-        result = subprocess.run(['bb-browser', 'open', url], capture_output=True, text=True)
+        result = bb('open', url)
         # 提取新标签页ID
         match = re.search(r'tab:\s*(\S+)', result.stdout)
         if match:
@@ -49,8 +67,9 @@ def main():
     auto_mode = '--auto' in sys.argv
 
     # 检查是否需要验证码
-    snap = subprocess.run(['bb-browser', 'snap', '--tab', tab_id, '-d', '2'], capture_output=True, text=True)
-    if '验证码' in snap.stdout or 'punish' in snap.stdout:
+    snap = bb('snap', '--tab', tab_id, '-d', '2')
+    snap_text = snap.stdout if snap else ''
+    if '验证码' in snap_text or 'punish' in snap_text:
         if auto_mode:
             print("  ⚠️ 1688验证码拦截,自动跳过")
             sys.exit(0)
@@ -63,18 +82,27 @@ def main():
     # JavaScript提取
     extract_js = """(function() {
         var prices = [];
-        document.querySelectorAll('*').forEach(function(el) {
-            var t = el.innerText;
-            if (t && t.length < 15 && /^[0-9.]+$/.test(t.trim())) {
-                var n = parseFloat(t);
-                if (n > 0 && n < 500) prices.push(n);
-            }
-        });
+        var text = document.body.innerText;
+        var re = /[\\u00a5]\\s*(\\d+\\.?\\d*)/g;
+        var m;
+        while ((m = re.exec(text)) !== null) {
+            var v = parseFloat(m[1]);
+            if (v > 1 && v < 500 && prices.indexOf(v) === -1) prices.push(v);
+        }
+        if (prices.length < 3) {
+            document.querySelectorAll('*').forEach(function(el) {
+                var t = el.innerText;
+                if (t && t.length < 15 && /^[0-9.]+$/.test(t.trim())) {
+                    var n = parseFloat(t);
+                    if (n > 1 && n < 500 && prices.length < 40) prices.push(n);
+                }
+            });
+        }
         prices.sort(function(a,b) { return a-b; });
-        return JSON.stringify({prices: prices.slice(0, 30)});
+        return JSON.stringify({prices: prices.slice(0, 25)});
     })()"""
 
-    result = subprocess.run(['bb-browser', 'eval', '--tab', tab_id, extract_js], capture_output=True, text=True)
+    result = bb('eval', '--tab', tab_id, extract_js)
 
     try:
         data = json.loads(result.stdout.strip())
