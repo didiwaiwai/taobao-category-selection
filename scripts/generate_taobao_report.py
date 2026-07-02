@@ -123,6 +123,8 @@ def normalize(data: dict) -> dict:
         'total_revenue_est': mo.get('totalRevenueEst', 0),
         'top_locations': mo.get('topLocations', []),
         'sample_info': data.get('sampleInfo', {}),
+        # 🆕 v4.2
+        'dynamism': data.get('dynamism', {}),
     }
 
 
@@ -557,6 +559,10 @@ def unsuitable_seller(norm):
 
 
 def brand_concentration_analysis(norm):
+    # 🆕 数据质量守卫
+    coverage = norm.get('data_quality', {}).get('brandCoverage', '0%')
+    if not coverage or coverage in ('0%', ''):
+        return '品牌数据不足，无法进行品牌集中度分析。建议手动补充品牌信息后重新评估。'
     hhi = float(norm['competition']['hhi'])
     if hhi > 2500: return '品牌高度集中，市场被少数品牌主宰，新品牌进入难度极大。'
     elif hhi > 1000: return '品牌中等集中，头部品牌有一定优势但未完全垄断。'
@@ -930,6 +936,11 @@ def generate_excel(norm: dict, output_path: str):
     ws1.write(7, 1, s['total'], score_fmt(s['total'], 100))
     ws1.write(7, 2, 100, cell_fmt)
     ws1.write(7, 3, f"{s['rating']} — {s['recommendation']}", cell_fmt)
+    # 评分柱状图
+    chart_score = wb.add_chart({'type': 'column'})
+    chart_score.add_series({'name': '得分','categories':'=评分总览!$A$3:$A$7','values':'=评分总览!$B$3:$B$7'})
+    chart_score.set_title({'name': '五维评分'})
+    ws1.insert_chart('F1', chart_score)
 
     # ========== Sheet 2: 市场规模 ==========
     ws2 = wb.add_worksheet('市场规模')
@@ -951,6 +962,17 @@ def generate_excel(norm: dict, output_path: str):
     ws3.write(6, 0, '在榜产品', cell_fmt); ws3.write(6, 1, g['hot_list'], num_fmt)
     ws3.write(7, 0, 'C店销量占比(参考)', cell_fmt); ws3.write(7, 1, g.get('cstore_ratio',''), cell_fmt)
     ws3.write(8, 0, '数据层级', cell_fmt); ws3.write(8, 1, norm['data_quality']['growth_tier'], cell_fmt)
+    # 增长信号柱状图
+    if norm['growth']['hot_bomb']+norm['growth']['hot_list']+norm['growth']['first_price']+norm['growth']['new_title']>0:
+        chart_growth = wb.add_chart({'type': 'column'})
+        ws3.write(10,0,'信号类型',hdr_fmt);ws3.write(10,1,'数量',hdr_fmt)
+        ws3.write(11,0,'热销爆款',cell_fmt);ws3.write(11,1,norm['growth']['hot_bomb'],num_fmt)
+        ws3.write(12,0,'在榜产品',cell_fmt);ws3.write(12,1,norm['growth']['hot_list'],num_fmt)
+        ws3.write(13,0,'首单价',cell_fmt);ws3.write(13,1,norm['growth']['first_price'],num_fmt)
+        ws3.write(14,0,'标题新品',cell_fmt);ws3.write(14,1,norm['growth']['new_title'],num_fmt)
+        chart_growth.add_series({'name':'信号数','categories':'=增长潜力!$A$11:$A$14','values':'=增长潜力!$B$11:$B$14'})
+        chart_growth.set_title({'name': '增长信号分布'})
+        ws3.insert_chart('D1', chart_growth)
 
     # ========== Sheet 4: 竞争格局 ==========
     ws4 = wb.add_worksheet('竞争格局')
@@ -1248,6 +1270,18 @@ tr:hover td{{background:#f0f4ff}}
 # ============================================================
 
 def main():
+    # 🆕 自动检测并启动 daemon
+    import subprocess as _sp
+    try:
+        r = _sp.run(['bb-browser', 'daemon', 'status'], capture_output=True, text=True, timeout=5)
+        if 'Daemon running: no' in (r.stdout or ''):
+            print('[AUTO] 启动 bb-browser daemon...')
+            _sp.run(['bb-browser', 'daemon', 'start'], capture_output=True, timeout=15)
+            import time; time.sleep(3)
+            print('[AUTO] daemon 已启动')
+    except Exception:
+        pass  # daemon 不可用时静默跳过
+
     if len(sys.argv) < 2:
         print(__doc__)
         sys.exit(1)

@@ -1,7 +1,7 @@
 /* @meta
 {
   "name": "taobao/category-score",
-  "description": "淘宝品类五维评分模型v4.1 — 3页并发抓取(144产品)+品牌HHI+交叉壁垒矩阵+1688对标",
+  "description": "淘宝品类五维评分模型v4.2 — 多排序交叉验证+动态地板+品牌HHI+交叉壁垒矩阵",
   "domain": "taobao.com",
   "args": {
     "query": {"required": true, "description": "搜索关键词"},
@@ -36,14 +36,15 @@ async function(args) {
     }, 30000);
 
     // 单页请求
-    function fetchPage(pageNum) {
+    function fetchPage(pageNum, overrideSort) {
+      var s = overrideSort || apiSort;
       return new Promise(function(ok, fail) {
         var t = setTimeout(function() { fail('timeout'); }, 15000);
         window.lib.mtop.request({
           api: 'mtop.relationrecommend.WirelessRecommend.recommend',
           v: '2.0',
           data: { appId: '34385', params: JSON.stringify({
-            q: query, sort: apiSort, page: String(pageNum), n: String(perPage),
+            q: query, sort: s, page: String(pageNum), n: String(perPage),
             m: 'pc', tab: 'all', ttid: '600000@taobao_pc_10.7.0'
           })},
           dataType: 'jsonp', ecode: 0
@@ -51,13 +52,13 @@ async function(args) {
       });
     }
 
-    // 并发抓取
-    var pagePromises = [];
-    for (var pg = 1; pg <= numPages; pg++) {
-      pagePromises.push(fetchPage(pg));
-    }
+    // 并发抓取: 主排序3页 + 综合排序1页 + 价格升序1页
+    var allPromises = [];
+    for (var pg = 1; pg <= numPages; pg++) { allPromises.push(fetchPage(pg)); }
+    allPromises.push(fetchPage(1, 'default'));
+    allPromises.push(fetchPage(1, 'price-asc'));
 
-    Promise.all(pagePromises).then(function(results) {
+    Promise.all(allPromises).then(function(results) {
       if (done) return;
       done = true; clearTimeout(globalTimer);
 
@@ -214,6 +215,24 @@ async function(args) {
         var priceBands=[{label:'¥0-20',min:0,max:20,count:0,sales:0},{label:'¥20-40',min:20,max:40,count:0,sales:0},{label:'¥40-80',min:40,max:80,count:0,sales:0},{label:'¥80-150',min:80,max:150,count:0,sales:0},{label:'¥150-300',min:150,max:300,count:0,sales:0},{label:'¥300-600',min:300,max:600,count:0,sales:0},{label:'¥600+',min:600,max:Infinity,count:0,sales:0}];
         for(var pb=0;pb<products.length;pb++){var pp=products[pb].price;for(var bd=0;bd<priceBands.length;bd++){if(pp>=priceBands[bd].min&&pp<priceBands[bd].max){priceBands[bd].count++;priceBands[bd].sales+=products[pb].sales;break;}}}
 
+        // ========== 多排序交叉验证 ==========
+        var totalItems=(results[3]&&results[3].data&&results[3].data.itemsArray)||[];
+        var priceItems=(results[4]&&results[4].data&&results[4].data.itemsArray)||[];
+        var totalIds={},saleIds={};
+        for(var i=0;i<products.length;i++)saleIds[products[i].item_id]=true;
+        var totalNewCount=0;
+        for(var i=0;i<totalItems.length;i++){if(totalItems[i].item_id&&!totalItems[i].customCardType){totalIds[totalItems[i].item_id]=true;if(hasNewTitle(totalItems[i].title||'')||((totalItems[i].priceShow&&totalItems[i].priceShow.priceDesc)==='首单价'))totalNewCount++;}}
+        var intersect=0;for(var id in totalIds){if(saleIds[id])intersect++;}
+        var jaccard=intersect/Math.max(1,Object.keys(saleIds).length+Object.keys(totalIds).length-intersect);
+        var totalNewRatio=totalItems.length>0?totalNewCount/Math.min(48,totalItems.length):0;
+        var saleNewRatio=products.length>0?(sig.newTitle.count+sig.firstPrice.count)/products.length:0;
+        var newProductBoost=saleNewRatio>0.001?Math.min(2,totalNewRatio/Math.max(0.001,saleNewRatio)):1;
+        var ascPrices=[];for(var i=0;i<priceItems.length;i++){var ap=parseFloat((priceItems[i].priceShow&&priceItems[i].priceShow.price)||priceItems[i].price||'0');if(ap>0)ascPrices.push(ap);}
+        ascPrices.sort(function(a,b){return a-b;});
+        var priceNorm=ascPrices.length>1?(ascPrices[ascPrices.length-1]-ascPrices[0])/ascPrices[ascPrices.length-1]:0;
+        var dynamismIndex=0.4*(1-jaccard)+0.3*Math.min(1,newProductBoost/2)+0.3*Math.min(1,priceNorm);
+        var dynamismLabel=dynamismIndex>0.5?'高动态(市场活跃)':(dynamismIndex>0.3?'中等动态':'低动态(市场稳定)');
+
         // ================================================================
         // 五维评分
         // ================================================================
@@ -224,18 +243,22 @@ async function(args) {
         else if(totalSales>50000){mktScore=11;mktLabel='中小市场(>'+(totalSales/10000).toFixed(0)+'万件)';}
         else{mktScore=8;mktLabel='小众市场(≤5万件)';}
 
+        var dynFloor=newnessTier==='Tier1'?12:(newnessTier==='Tier2'?14:15);
         var growthBase,growthBaseLabel;
         if(newnessRatio>0.40){growthBase=22;growthBaseLabel='爆发期(新品占'+(newnessRatio*100).toFixed(0)+'%)';}
         else if(newnessRatio>0.20){growthBase=18;growthBaseLabel='成长期(新品占'+(newnessRatio*100).toFixed(0)+'%)';}
         else if(newnessRatio>0.10){growthBase=14;growthBaseLabel='成熟期(新品占'+(newnessRatio*100).toFixed(0)+'%)';}
-        else{growthBase=14;growthBaseLabel='老化/固化(新品仅'+(newnessRatio*100).toFixed(0)+'%) [地板14]';}
+        else{growthBase=Math.max(dynFloor,12);growthBaseLabel='老化/固化(新品仅'+(newnessRatio*100).toFixed(0)+'%) [地板'+dynFloor+']';}
         var tier2Discount=0;
         if(newnessTier==='Tier2'){if(newSignalCStoreRatio<0.15)tier2Discount=-3;else if(newSignalCStoreRatio<0.30)tier2Discount=-2;else if(newSignalCStoreRatio<0.50)tier2Discount=-1;}
         var heatBonus=0,heatParts=[];
         if(sig.hotBomb.count/products.length>0.15){heatBonus+=1;heatParts.push(sig.hotBomb.count+'热销爆款');}
         if(sig.hotList.count/products.length>0.30){heatBonus+=1;heatParts.push(sig.hotList.count+'在榜');}
         if(sig.newTitle.count>3&&newSignalCStoreRatio>0.30){heatBonus+=1;heatParts.push(sig.newTitle.count+'标题新(C店为主)');}
-        var growthScore=Math.min(25,Math.max(8,growthBase+heatBonus+tier2Discount));
+        var dynamismBonus=0;
+        if(dynamismIndex>0.60){dynamismBonus=2;heatParts.push('高动态(DI='+dynamismIndex.toFixed(2)+')');}
+        else if(dynamismIndex>0.40){dynamismBonus=1;heatParts.push('中等动态');}
+        var growthScore=Math.min(25,Math.max(6,growthBase+heatBonus+tier2Discount+dynamismBonus));
         var growthLabel=growthBaseLabel+' ['+newnessSource+']';
         if(heatParts.length>0)growthLabel+=' +'+heatParts.join(',');
         if(tier2Discount<0)growthLabel+=' ⚠️品牌换皮折扣'+tier2Discount;
@@ -282,9 +305,10 @@ async function(args) {
 
         resolve({
           query:query,sort:sort,
-          modelVersion:'v4.1-multipage',
+          modelVersion:'v4.2-dynamic',
           analyzedProducts:products.length,
           sampleInfo:{pages:numPages,perPage:perPage,totalRaw:totalRaw,deduped:products.length},
+          dynamism:{index:dynamismIndex,label:dynamismLabel,jaccard:jaccard,newProductBoost:newProductBoost,priceDispersion:priceNorm},
           dataQuality:{
             listingDateCoverage:(listingCoverage*100).toFixed(0)+'%',
             brandCoverage:(brandArr.filter(function(x){return x.brand!=='未知';}).length/products.length*100).toFixed(0)+'%',
