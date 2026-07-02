@@ -46,9 +46,14 @@ def main():
     print(f"[2/4] 等待页面加载(5秒)...")
     time.sleep(5)
 
+    auto_mode = '--auto' in sys.argv
+
     # 检查是否需要验证码
     snap = subprocess.run(['bb-browser', 'snap', '--tab', tab_id, '-d', '2'], capture_output=True, text=True)
     if '验证码' in snap.stdout or 'punish' in snap.stdout:
+        if auto_mode:
+            print("  ⚠️ 1688验证码拦截,自动跳过")
+            sys.exit(0)
         print("  ⚠️ 1688需要滑块验证,请手动在Chrome中完成验证...")
         print("  完成后按Enter继续")
         input()
@@ -88,7 +93,7 @@ def main():
 
         # 保存
         output = {'prices': valid_prices}
-        output_path = f'data_{keyword}_1688.json'
+        output_path = '/tmp/taobao_data_1688.json' if auto_mode else f'data_{keyword}_1688.json'
         with open(output_path, 'w', encoding='utf-8') as f:
             json.dump(output, f, ensure_ascii=False)
 
