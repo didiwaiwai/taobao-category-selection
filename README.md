@@ -1,18 +1,54 @@
 # taobao-category-selection
 
-基于五维评分模型的淘宝/天猫品类选品分析工具——对齐 Sorftime MCP Skills 方法论，针对淘宝平台本地化适配。
+基于五维评分模型的淘宝/天猫品类选品分析工具——对齐 Sorftime MCP Skills 方法论。
 
-**一行命令采集数据，两行命令生成完整报告（Markdown + Excel 12 Sheets + HTML 仪表板 + Claude 深度分析）。**
+**在 Claude Code 中说一句话即可完成：采集→评分→报告→深度分析。全程自动。**
 
-## 快速开始
-
-### 1. 安装依赖
+## 安装（一行命令）
 
 ```bash
-# 安装 bb-browser（浏览器自动化）
-npm install -g bb-browser --registry=https://registry.npmmirror.com
+git clone https://github.com/<你的用户名>/taobao-category-selection.git
+cd taobao-category-selection
+bash setup.sh   # 一键安装 bb-browser + 适配器 + Python 依赖
+```
 
-# 安装 Python 依赖
+## 使用（在 Claude Code 中说一句话）
+
+```
+分析淘宝男士素颜霜
+```
+
+Claude Code 自动完成五步：
+1. 采集数据（多排序交叉验证，最多144产品，约30秒）
+2. 五维评分 + 生成报告（MD + Excel + HTML，约5秒）
+3. 读取数据简报（data_brief.md）
+4. 撰写深度分析（SWOT + 策略 + 卖家画像）
+5. 保存并注入完整报告
+
+**输出目录：** `taobao-reports/{品类}_{日期}/`
+
+## 手动使用
+
+```bash
+# 第1步：采集评分数据
+bb-browser site taobao/category-score 蓝牙耳机 --json > data.json
+
+# 第2步：生成完整报告
+python scripts/generate_taobao_report.py data.json
+```
+
+## 前置条件
+
+- Node.js 18+
+- Python 3.9+
+- Chrome 浏览器
+- Claude Code（用于 Skill 自动执行）
+
+首次使用需先登录淘宝：
+```bash
+bb-browser daemon start
+bb-browser open https://www.taobao.com   # 扫码登录
+```
 pip install xlsxwriter -i https://mirrors.aliyun.com/pypi/simple/
 ```
 
