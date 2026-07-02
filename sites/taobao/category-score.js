@@ -20,7 +20,7 @@ async function(args) {
   if (!query) return {error: 'Missing query'};
 
   var perPage = Math.min(parseInt(args.count) || 48, 48);
-  var numPages = Math.min(parseInt(args.pages) || 3, 5);
+  var numPages = Math.min(parseInt(args.pages) || 2, 3);
   var sort = args.sort || 'sale-desc';
   var sortMap = {'sale-desc': '_coefp', 'total-desc': 'default'};
   var apiSort = sortMap[sort] || '_coefp';
@@ -33,7 +33,7 @@ async function(args) {
     var done = false;
     var globalTimer = setTimeout(function() {
       if (!done) { done = true; resolve({error: 'API timeout (multi-page)'}); }
-    }, 30000);
+    }, 45000);
 
     // 单页请求
     function fetchPage(pageNum, overrideSort) {
@@ -52,13 +52,19 @@ async function(args) {
       });
     }
 
-    // 并发抓取: 主排序3页 + 综合排序1页 + 价格升序1页
-    var allPromises = [];
-    for (var pg = 1; pg <= numPages; pg++) { allPromises.push(fetchPage(pg)); }
-    allPromises.push(fetchPage(1, 'default'));
-    allPromises.push(fetchPage(1, 'price-asc'));
+    // 串行抓取(页间延迟3秒,避免触发淘宝限流)
+    function fetchSequentially(pg, results) {
+      if (pg > numPages) return Promise.resolve(results);
+      return fetchPage(pg).then(function(r) {
+        results.push(r);
+        if (pg < numPages) {
+          return new Promise(function(ok) { setTimeout(function() { ok(fetchSequentially(pg+1, results)); }, 3000); });
+        }
+        return results;
+      });
+    }
 
-    Promise.all(allPromises).then(function(results) {
+    fetchSequentially(1, []).then(function(results) {
       if (done) return;
       done = true; clearTimeout(globalTimer);
 
@@ -169,9 +175,9 @@ async function(args) {
         locArr.sort(function(a,b){return b.count-a.count;});
 
         // 品牌 HHI
-        var brandMap={};
-        for(var b=0;b<products.length;b++){var br=products[b].brand||'未知';brandMap[br]=(brandMap[br]||0)+products[b].sales;}
-        var brandArr=[]; for(var bn in brandMap)brandArr.push({brand:bn,sales:brandMap[bn],share:brandMap[bn]/totalSalesSafe});
+        var brandMap={},brandCount={};
+        for(var b=0;b<products.length;b++){var br=products[b].brand||'未知';brandMap[br]=(brandMap[br]||0)+products[b].sales;brandCount[br]=(brandCount[br]||0)+1;}
+        var brandArr=[]; for(var bn in brandMap)brandArr.push({brand:bn,sales:brandMap[bn],count:brandCount[bn],share:brandMap[bn]/totalSalesSafe});
         brandArr.sort(function(a,b){return b.sales-a.sales;});
         var hhi=0; for(var h=0;h<brandArr.length;h++){hhi+=Math.pow(brandArr[h].share*100,2);}
         var cr3Brand=0; for(var c3=0;c3<Math.min(3,brandArr.length);c3++)cr3Brand+=brandArr[c3].share;
@@ -216,22 +222,7 @@ async function(args) {
         for(var pb=0;pb<products.length;pb++){var pp=products[pb].price;for(var bd=0;bd<priceBands.length;bd++){if(pp>=priceBands[bd].min&&pp<priceBands[bd].max){priceBands[bd].count++;priceBands[bd].sales+=products[pb].sales;break;}}}
 
         // ========== 多排序交叉验证 ==========
-        var totalItems=(results[3]&&results[3].data&&results[3].data.itemsArray)||[];
-        var priceItems=(results[4]&&results[4].data&&results[4].data.itemsArray)||[];
-        var totalIds={},saleIds={};
-        for(var i=0;i<products.length;i++)saleIds[products[i].item_id]=true;
-        var totalNewCount=0;
-        for(var i=0;i<totalItems.length;i++){if(totalItems[i].item_id&&!totalItems[i].customCardType){totalIds[totalItems[i].item_id]=true;if(hasNewTitle(totalItems[i].title||'')||((totalItems[i].priceShow&&totalItems[i].priceShow.priceDesc)==='首单价'))totalNewCount++;}}
-        var intersect=0;for(var id in totalIds){if(saleIds[id])intersect++;}
-        var jaccard=intersect/Math.max(1,Object.keys(saleIds).length+Object.keys(totalIds).length-intersect);
-        var totalNewRatio=totalItems.length>0?totalNewCount/Math.min(48,totalItems.length):0;
-        var saleNewRatio=products.length>0?(sig.newTitle.count+sig.firstPrice.count)/products.length:0;
-        var newProductBoost=saleNewRatio>0.001?Math.min(2,totalNewRatio/Math.max(0.001,saleNewRatio)):1;
-        var ascPrices=[];for(var i=0;i<priceItems.length;i++){var ap=parseFloat((priceItems[i].priceShow&&priceItems[i].priceShow.price)||priceItems[i].price||'0');if(ap>0)ascPrices.push(ap);}
-        ascPrices.sort(function(a,b){return a-b;});
-        var priceNorm=ascPrices.length>1?(ascPrices[ascPrices.length-1]-ascPrices[0])/ascPrices[ascPrices.length-1]:0;
-        var dynamismIndex=0.4*(1-jaccard)+0.3*Math.min(1,newProductBoost/2)+0.3*Math.min(1,priceNorm);
-        var dynamismLabel=dynamismIndex>0.5?'高动态(市场活跃)':(dynamismIndex>0.3?'中等动态':'低动态(市场稳定)');
+        var dynamismIndex=0.3,dynamismLabel='单页模式(无交叉验证)';
 
         // ================================================================
         // 五维评分
@@ -305,10 +296,9 @@ async function(args) {
 
         resolve({
           query:query,sort:sort,
-          modelVersion:'v4.2-dynamic',
+          modelVersion:'v4.2',
           analyzedProducts:products.length,
           sampleInfo:{pages:numPages,perPage:perPage,totalRaw:totalRaw,deduped:products.length},
-          dynamism:{index:dynamismIndex,label:dynamismLabel,jaccard:jaccard,newProductBoost:newProductBoost,priceDispersion:priceNorm},
           dataQuality:{
             listingDateCoverage:(listingCoverage*100).toFixed(0)+'%',
             brandCoverage:(brandArr.filter(function(x){return x.brand!=='未知';}).length/products.length*100).toFixed(0)+'%',
@@ -328,7 +318,7 @@ async function(args) {
             totalProducts:products.length,totalSales:totalSales,totalRevenueEst:totalRevenueEst,
             avgPrice:'¥'+avgPrice.toFixed(2),medianPrice:'¥'+medPrice.toFixed(2),
             shopTypeDistribution:shopTypeDist,topShops:topShops,
-            topBrands:brandArr.slice(0,8).map(function(b){return{brand:b.brand,sales:b.sales,share:(b.share*100).toFixed(1)+'%'};}),
+            topBrands:brandArr.slice(0,8).map(function(b){return{brand:b.brand,sales:b.sales,count:b.count,share:(b.share*100).toFixed(1)+'%'};}),
             brandHHI:effectiveHHI.toFixed(0),brandHHI_raw:hhi.toFixed(0),hhiSource:hhiSource,
             topLocations:locArr.slice(0,5),
             tmallRatio:(tmallRatio*100).toFixed(1)+'%',flagshipRatio:(flagshipRatio*100).toFixed(1)+'%',
