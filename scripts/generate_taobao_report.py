@@ -431,10 +431,10 @@ def generate_top_product_insights(norm):
 # ============================================================
 
 def generate_1688_insight(norm):
-    """1688成本对标分析"""
+    """1688成本对标分析 — 深度供应链洞察"""
     data_1688 = norm.get('data_1688', {})
     if not data_1688 or not data_1688.get('prices'):
-        return ''
+        return '暂无1688数据。运行 `python scripts/collect_1688.py <关键词>` 采集。'
     prices = data_1688['prices']
     avg_taobao_str = str(norm['market']['avg_price']).replace('¥','').replace(',','')
     try: avg_taobao_num = float(avg_taobao_str)
@@ -443,14 +443,38 @@ def generate_1688_insight(norm):
     markup = avg_taobao_num / mid_cost if mid_cost > 0 else 0
     gross_margin = (avg_taobao_num - mid_cost) / avg_taobao_num * 100 if avg_taobao_num > 0 else 0
     platform_fee = avg_taobao_num * 0.05
-    net_profit = avg_taobao_num - mid_cost - platform_fee - 3 - 1.5
+    net_profit = avg_taobao_num - mid_cost - platform_fee - 4.5
     net_margin = net_profit / avg_taobao_num * 100
-    lines = [f'- **1688批发价区间**: ¥{min(prices):.0f} ~ ¥{max(prices):.0f}']
-    lines.append(f'- **中位批发价**: ¥{mid_cost:.0f}，零售价约为批发价的 {markup:.1f}x')
-    lines.append(f'- **预估毛利率**: {gross_margin:.0f}% | **预估净利**: ¥{net_profit:.1f}/单 ({net_margin:.0f}%)')
-    if gross_margin > 60: lines.append('💡 毛利空间充足，可支撑投流和内容营销，适合品牌化运作')
-    elif gross_margin > 40: lines.append('💡 毛利尚可，走量可盈利，注意控制广告ROI')
-    else: lines.append('💡 毛利偏低，必须靠供应链优势或走量策略')
+
+    lines = []
+    lines.append(f'| 指标 | 数值 |')
+    lines.append(f'|------|------|')
+    lines.append(f'| 1688批发价区间 | ¥{min(prices):.0f} ~ ¥{max(prices):.0f} |')
+    lines.append(f'| 中位批发价 | ¥{mid_cost:.0f} |')
+    lines.append(f'| 淘宝零售均价 | {norm["market"]["avg_price"]} |')
+    lines.append(f'| 零售/批发比 | {markup:.1f}x |')
+    lines.append(f'| 预估毛利率 | {gross_margin:.0f}% |')
+    lines.append(f'| 预估净利/单 | ¥{net_profit:.1f} ({net_margin:.0f}%) |')
+    lines.append('')
+    lines.append(f'**成本拆解** (以中位批发¥{mid_cost:.0f}为例):')
+    lines.append(f'- 原料+生产: ¥{mid_cost:.0f}')
+    lines.append(f'- 包装(瓶+盒): ¥1.5-3.0')
+    lines.append(f'- 快递: ¥2.5-3.5')
+    lines.append(f'- 平台佣金(~5%): ¥{platform_fee:.1f}')
+    lines.append(f'- **单件净利: ¥{net_profit:.1f}**')
+    lines.append('')
+    lines.append(f'**供应链建议**:')
+    lines.append(f'- 起订量500-1000支,单款首批投入约¥{mid_cost*500:.0f}-¥{mid_cost*1000:.0f}')
+    lines.append(f'- 广州白云区/义乌化妆品产业带集中,精油类代工厂充足')
+    if gross_margin > 60:
+        lines.append(f'- 🔥 毛利率{gross_margin:.0f}%极高,有充足空间做包装升级和内容营销')
+    elif gross_margin > 40:
+        lines.append(f'- 毛利率{gross_margin:.0f}%尚可,控制包装成本后可盈利')
+    else:
+        lines.append(f'- 毛利率{gross_margin:.0f}%偏低,必须靠走量或自建供应链降低成本')
+    if len(prices) >= 3:
+        lines.append(f'- 价格分层明显: 低端¥{min(prices):.0f}/高端¥{max(prices):.0f},不同品质对应不同定位')
+
     return '\n'.join(lines)
 
 
@@ -1097,6 +1121,50 @@ def generate_excel(norm: dict, output_path: str):
     ws12.write(5, 0, 'HHI数据源', cell_fmt); ws12.write(5, 1, norm['hhi_source'], cell_fmt)
     ws12.write(6, 0, '模型版本', cell_fmt); ws12.write(6, 1, norm['model_version'], cell_fmt)
     ws12.write(7, 0, '生成时间', cell_fmt); ws12.write(7, 1, datetime.now().isoformat(), cell_fmt)
+
+    # ========== Sheet 13: 1688供应链分析 ==========
+    ws13 = wb.add_worksheet('1688供应链')
+    ws13.write(0, 0, '指标', hdr_fmt); ws13.write(0, 1, '数值', hdr_fmt)
+    ws13.set_column(0, 0, 20); ws13.set_column(1, 1, 30)
+    d1688 = norm.get('data_1688', {})
+    if d1688 and d1688.get('prices'):
+        prices = d1688['prices']
+        row = 1
+        ws13.write(row, 0, '批发价区间', cell_fmt); ws13.write(row, 1, f'¥{min(prices):.0f} ~ ¥{max(prices):.0f}', cell_fmt); row += 1
+        mid_p = sorted(prices)[len(prices)//2]
+        ws13.write(row, 0, '中位批发价', cell_fmt); ws13.write(row, 1, f'¥{mid_p:.0f}', cell_fmt); row += 1
+        try:
+            avg_t = float(str(norm['market']['avg_price']).replace('¥','').replace(',',''))
+            ws13.write(row, 0, '淘宝零售均价', cell_fmt); ws13.write(row, 1, f'¥{avg_t:.0f}', cell_fmt); row += 1
+            markup = avg_t / mid_p if mid_p > 0 else 0
+            ws13.write(row, 0, '零售/批发比', cell_fmt); ws13.write(row, 1, f'{markup:.1f}x', cell_fmt); row += 1
+            gross = (avg_t - mid_p) / avg_t * 100
+            ws13.write(row, 0, '预估毛利率', cell_fmt); ws13.write(row, 1, f'{gross:.0f}%', cell_fmt); row += 1
+            platform = avg_t * 0.05
+            net = avg_t - mid_p - platform - 4.5
+            net_m = net / avg_t * 100
+            ws13.write(row, 0, '预估净利/单', cell_fmt); ws13.write(row, 1, f'¥{net:.1f} ({net_m:.0f}%)', cell_fmt); row += 1
+        except: pass
+        row += 1
+        ws13.write(row, 0, '成本构成估算', hdr_fmt); ws13.write(row, 1, '金额/单', hdr_fmt); row += 1
+        ws13.write(row, 0, '原料+生产', cell_fmt); ws13.write(row, 1, f'¥{mid_p:.0f}', cell_fmt); row += 1
+        ws13.write(row, 0, '包装(瓶+盒)', cell_fmt); ws13.write(row, 1, '¥1.5-3.0', cell_fmt); row += 1
+        ws13.write(row, 0, '快递', cell_fmt); ws13.write(row, 1, '¥2.5-3.5', cell_fmt); row += 1
+        ws13.write(row, 0, '平台佣金(~5%)', cell_fmt); ws13.write(row, 1, f'¥{platform:.1f}', cell_fmt); row += 1
+        row += 1
+        ws13.write(row, 0, '供应链建议', hdr_fmt); ws13.merge_range(row, 0, row, 1, '', hdr_fmt); row += 1
+        tips = [
+            f'1. 起订量500-1000支,单款投入¥{mid_p*500:.0f}-¥{mid_p*1000:.0f}',
+            '2. 广州白云区/义乌化妆品产业带集中,建议实地看厂选品',
+            '3. 包装瓶+纸盒成本占50%+,优先在包装设计上做差异化',
+            '4. 精油配方比普通指缘油溢价¥3-5/支,但需要香精供应商配合调香',
+            '5. 首批3-5个SKU(不同香型),用同一瓶型降低模具费',
+        ]
+        for tip in tips:
+            ws13.write(row, 0, tip, cell_fmt); ws13.merge_range(row, 0, row, 1, tip, cell_fmt); row += 1
+    else:
+        ws13.write(1, 0, '暂无1688数据', cell_fmt)
+        ws13.write(2, 0, '运行 python scripts/collect_1688.py <关键词> 采集', cell_fmt)
 
     wb.close()
     return output_path
