@@ -1330,6 +1330,108 @@ tr:hover td{{background:#f0f4ff}}
 
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write(html)
+
+
+def generate_html_full(norm: dict, output_path: str):
+    """生成增强版 HTML 仪表板 — 六标签页展示所有数据"""
+    s = norm['scoring']; m = norm['market']; dims = norm['dimensions']
+    products = norm.get('products', [])[:20]
+    brands = norm.get('top_brands', [])[:10]
+    shops = norm.get('top_shops', [])[:10]
+    price_bands = norm.get('price_bands', [])
+    d1688 = norm.get('data_1688', {})
+    analysis = norm.get('llm_analysis', '> 暂无深度分析')
+
+    # 基础数据
+    dim_names = json.dumps(['市场规模','增长潜力','竞争烈度','进入壁垒','利润空间'], ensure_ascii=False)
+    dim_scores = json.dumps([dims[k]['score'] for k in ['marketSize','growthPotential','competition','entryBarrier','profitMargin']])
+    pb_labels = json.dumps([p['label'] for p in price_bands], ensure_ascii=False)
+    pb_counts = json.dumps([p['count'] for p in price_bands])
+
+    color = "#22c55e" if s["total"]>=80 else "#3b82f6" if s["total"]>=70 else "#f59e0b" if s["total"]>=50 else "#ef4444"
+
+    # 产品表格行
+    pr_rows = ''
+    for i, p in enumerate(products, 1):
+        pr_rows += '<tr><td>%d</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>' % (
+            i, p.get('title','')[:40], p.get('price',''), p.get('salesRaw',''), p.get('shop','')[:12], p.get('brand','')[:10])
+
+    # 品牌表格行
+    br_rows = ''
+    for i, b in enumerate(brands, 1):
+        br_rows += '<tr><td>%d</td><td>%s</td><td>%d</td><td>%s</td></tr>' % (
+            i, b.get('brand','')[:15], b.get('count',0), b.get('share',''))
+
+    # 1688数据
+    d8_section = ''
+    if d1688 and d1688.get('prices'):
+        ps = d1688['prices']; mid = sorted(ps)[len(ps)//2]
+        try:
+            avg_t = float(str(m['avg_price']).replace('¥','').replace(',',''))
+            markup = avg_t/mid if mid else 0; gm = (avg_t-mid)/avg_t*100
+        except: avg_t=0;markup=0;gm=0
+        d8_section = '''<table style="max-width:600px">
+        <tr><td>批发价区间</td><td>¥%.0f ~ ¥%.0f</td></tr>
+        <tr><td>中位批发价</td><td>¥%.0f</td></tr>
+        <tr><td>零售均价</td><td>%s</td></tr>
+        <tr><td>零售/批发比</td><td>%.1fx</td></tr>
+        <tr><td>预估毛利率</td><td>%.0f%%</td></tr>
+        </table><p style="margin-top:12px">起订量500-1000支 | 广州白云/义乌产业带</p>''' % (
+            min(ps), max(ps), mid, m['avg_price'], markup, gm)
+    else:
+        d8_section = '<p>暂无1688数据。运行 python scripts/collect_1688.py 采集。</p>'
+
+    # HTML 主体
+    html = '''<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">
+<title>%s - 完整分析仪表板</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,sans-serif;background:#f5f7fa;padding:16px}
+.container{max-width:1200px;margin:0 auto}
+h1{text-align:center;font-size:20px;margin-bottom:8px}
+.score{text-align:center;font-size:40px;font-weight:bold;color:%s}
+.tabs{display:flex;gap:4px;margin:12px 0;flex-wrap:wrap}
+.tab{padding:8px 16px;border:none;background:#e2e8f0;border-radius:8px 8px 0 0;cursor:pointer;font-size:13px}
+.tab.active{background:#fff;color:#4472C4;font-weight:700}
+.panel{display:none;background:#fff;border-radius:0 12px 12px 12px;padding:20px}
+.panel.active{display:block}
+table{width:100%%;border-collapse:collapse;font-size:13px;margin-top:12px}
+th{background:#4472C4;color:#fff;padding:6px 10px;text-align:left}
+td{padding:6px 10px;border-bottom:1px solid #eee}
+.analysis{line-height:1.8;white-space:pre-wrap}
+</style></head><body>
+<div class="container">
+<h1>🔍 %s — 淘宝品类选品分析</h1>
+<div class="score">%d<span style="font-size:16px;color:#999">/100</span></div>
+<div class="tabs">
+<button class="tab active" onclick="sw(0)">评分总览</button>
+<button class="tab" onclick="sw(1)">价格带</button>
+<button class="tab" onclick="sw(2)">品牌/店铺</button>
+<button class="tab" onclick="sw(3)">产品清单</button>
+<button class="tab" onclick="sw(4)">1688供应链</button>
+<button class="tab" onclick="sw(5)">深度分析</button>
+</div>
+<div class="panel active" id="p0"><canvas id="rc" height="200"></canvas></div>
+<div class="panel" id="p1"><canvas id="pc" height="200"></canvas></div>
+<div class="panel" id="p2"><h3>品牌</h3><table><tr><th>排名</th><th>品牌</th><th>产品数</th><th>份额</th></tr>%s</table></div>
+<div class="panel" id="p3"><table><tr><th>#</th><th>产品</th><th>价格</th><th>销量</th><th>店铺</th><th>品牌</th></tr>%s</table></div>
+<div class="panel" id="p4"><h3>1688采购成本</h3>%s</div>
+<div class="panel" id="p5"><div class="analysis">%s</div></div>
+</div>
+<script>
+function sw(n){document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',i===n));
+document.querySelectorAll('.panel').forEach((p,i)=>p.classList.toggle('active',i===n));}
+new Chart(document.getElementById('rc'),{type:'radar',data:{labels:%s,datasets:[{label:'Score',data:%s,borderColor:'#4472C4',backgroundColor:'rgba(68,114,196,0.2)'}]}});
+new Chart(document.getElementById('pc'),{type:'bar',data:{labels:%s,datasets:[{label:'Count',data:%s,backgroundColor:'#4472C4'}]}});
+</script></body></html>''' % (
+        norm['query'], color, norm['query'], s['total'],
+        br_rows, pr_rows, d8_section, analysis.replace('<','&lt;').replace('>','&gt;'),
+        dim_names, dim_scores, pb_labels, pb_counts)
+
+    with open(output_path, 'w', encoding='utf-8') as f:
+        f.write(html)
+    return output_path
     return output_path
 
 
@@ -1410,6 +1512,11 @@ def main():
     html_path = os.path.join(output_dir, 'dashboard.html')
     generate_html(norm, html_path)
     print(f'[OK] html: {html_path}')
+
+    # Generate enhanced HTML with tabs
+    html_full_path = os.path.join(output_dir, 'dashboard_full.html')
+    generate_html_full(norm, html_full_path)
+    print(f'[OK] html_full: {html_full_path}')
 
     # Generate LLM data brief
     brief = generate_data_brief(norm)
