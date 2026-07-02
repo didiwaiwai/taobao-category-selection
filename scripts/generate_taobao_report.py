@@ -1294,10 +1294,14 @@ def main():
     norm = normalize(raw)
 
     # 🆕 注入1688数据
-    _1688_file = os.path.join(os.path.dirname(input_file), os.path.basename(input_file).replace('.json','_1688.json'))
+    _1688_file = os.path.join(os.path.dirname(os.path.abspath(input_file)), os.path.basename(input_file).replace('.json','_1688.json'))
+    # Also check /tmp/ fallback
+    if not os.path.exists(_1688_file):
+        _1688_file = '/tmp/' + os.path.basename(input_file).replace('.json','_1688.json')
     if os.path.exists(_1688_file):
         with open(_1688_file, 'r', encoding='utf-8-sig') as f:
             norm['data_1688'] = json.load(f)
+        print('[OK] 1688 loaded: ' + str(norm['data_1688']['prices']))
 
     # Determine output directory
     query_safe = re.sub(r'[^\w]', '_', norm['query'])
