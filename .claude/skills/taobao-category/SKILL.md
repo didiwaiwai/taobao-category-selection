@@ -46,7 +46,9 @@ Read taobao-reports/{品类}_{日期}/data_brief.md
 - Top 10 产品详情 | 店铺类型分布 | Dynamism Index 动态性
 - 多排序交叉验证结果（Jaccard相似度、新品Boost、价格离散度）
 
-### 第4步：撰写深度分析
+### 第4步：撰写深度分析并注入报告（自动，不询问用户）
+
+**此步骤不可跳过。读取 data_brief.md 后立即撰写，无需等待用户确认。**
 
 以"淘宝选品运营专家"身份，基于 data_brief.md 的数据，撰写以下7个部分的分析报告：
 
@@ -58,14 +60,7 @@ Read taobao-reports/{品类}_{日期}/data_brief.md
 6. **进入策略建议** — 具体定价区间、产品差异化方向、运营节奏、供应链策略
 7. **适合/不适合的卖家画像** — 具体到资源、能力、团队规模
 
-### 第5步：保存分析并重新生成完整报告
-```bash
-# 保存分析
-Write llm_analysis.md
-
-# 重新生成注入分析
-python scripts/generate_taobao_report.py /tmp/taobao_data.json
-```
+分析直接写入 `taobao-reports/{品类}_{日期}/llm_analysis.md`，然后重新运行报告生成器自动注入。
 
 ### 写作要求
 
