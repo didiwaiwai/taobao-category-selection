@@ -1301,7 +1301,6 @@ def main():
     if os.path.exists(_1688_file):
         with open(_1688_file, 'r', encoding='utf-8-sig') as f:
             norm['data_1688'] = json.load(f)
-        print('[OK] 1688 loaded: ' + str(norm['data_1688']['prices']))
 
     # Determine output directory
     query_safe = re.sub(r'[^\w]', '_', norm['query'])
