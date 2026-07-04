@@ -743,6 +743,30 @@ def generate_data_brief(norm: dict) -> str:
             brief += '\n> 请基于以上1688实际产品数据，在供应链分析中引用具体产品和价格，给出可落地的选品和定价建议。\n'
 
     brief += f'''
+### Top 5 产品卖点提取
+| # | 产品 | 价格 | 销量 | 卖点关键词 |
+|---|------|------|------|-----------|
+'''
+    for sp in norm.get('top5_selling_points', [])[:5]:
+        sp_list = '、'.join(sp['selling_points'][:5]) if sp['selling_points'] else '无特殊卖点词'
+        brief += f"| {sp['rank']} | {sp['title'][:35]} | {sp['price']} | {sp['sales']} | {sp_list} |\n"
+    brief += '\n> 请基于以上Top产品的卖点关键词，在竞品分析中指出头部产品的主打方向和可借鉴的差异化卖点。\n'
+
+    # 关键词数据
+    kw_data = norm.get('data_keywords', {})
+    if kw_data and kw_data.get('main'):
+        brief += '\n### 关键词研究 (suggest.taobao.com 免费)\n'
+        brief += '| 关键词 | 热度指数 |\n|------|------|\n'
+        for k in kw_data['main'][:10]:
+            brief += f"| {k['kw']} | {k['pop']} |\n"
+        ext = kw_data.get('extended', [])[:10]
+        if ext:
+            brief += '\n**扩展关键词**:\n'
+            for k in ext[:10]:
+                brief += f"- {k['kw']} (热度:{k['pop']})\n"
+        brief += '\n> 热度指数为相对值, 越高=搜索量越大。可对比不同关键词的相对热度来判断用户搜索倾向。\n'
+
+    brief += f'''
 ### 你的任务
 请以上述数据为基础，以资深电商选品运营专家的身份，写一份完整的分析报告，包含以下部分：
 
@@ -1757,6 +1781,35 @@ def main():
     if os.path.exists(_1688_file):
         with open(_1688_file, 'r', encoding='utf-8-sig') as f:
             norm['data_1688'] = json.load(f)
+
+    # 关键词数据 (从 data_brief 生成时调用, 或已有文件)
+    _kw_file = os.path.join(os.path.dirname(os.path.abspath(input_file)), 'data_keywords.json')
+    if os.path.exists(_kw_file):
+        with open(_kw_file, 'r', encoding='utf-8-sig') as f:
+            norm['data_keywords'] = json.load(f)
+
+    # Top 5 产品卖点提取
+    products = norm.get('products', [])
+    top5_sp = []
+    for p in products[:5]:
+        title = p.get('title', '')
+        # Extract selling points from title
+        keywords = ['AI','智能','自动','免','无线','便携','防水','大容量','超长','静音','高清','专业',
+                    '升级','新款','原装','进口','天然','有机','活性','高纯度','医用','食品级','304不锈钢',
+                    '送','赠','礼盒','套装','限时','补贴','首单','学生','儿童','婴儿','孕妇','老人']
+        found = [kw for kw in keywords if kw in title]
+        top5_sp.append({
+            'rank': p.get('index', len(top5_sp)+1),
+            'title': title[:60],
+            'price': p.get('price',''),
+            'sales': p.get('sales',''),
+            'shop': p.get('shop','')[:20],
+            'brand': p.get('brand','')[:15],
+            'selling_points': found[:8],
+            'is_new': bool(p.get('isRecent6m') or p.get('hasNewTitle') or p.get('isFirstPrice')),
+            'is_ad': p.get('isAd', False)
+        })
+    norm['top5_selling_points'] = top5_sp
 
     # Determine output directory
     query_safe = re.sub(r'[^\w]', '_', norm['query'])
