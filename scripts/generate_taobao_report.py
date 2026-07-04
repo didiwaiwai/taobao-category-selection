@@ -1791,20 +1791,37 @@ def main():
     # Top 5 产品卖点提取
     products = norm.get('products', [])
     top5_sp = []
+    # 全品类卖点关键词库
+    sell_kw = ['纯钛','钛合金','无涂层','不粘','健康','抗菌','防刮','耐磨','耐腐蚀','轻便','超轻',
+               '折叠','便携','户外','露营','旅行','套装','礼盒','送礼','高颜值','ins风','简约',
+               'AI','智能','自动','免安装','无线','蓝牙','充电','超长续航','静音','降噪','防水',
+               '大容量','大吸力','多功能','二合一','三合一','一体','新款','升级','2025','2026',
+               '首单','补贴','学生','儿童','婴儿','孕产妇','老人','有机','天然','无添加','食品级',
+               '德国','日本','韩国','进口','原装','正品','官方','旗舰','认证','专利','医用',
+               '不粘锅','炒锅','汤锅','煎锅','平底锅','奶锅','蒸锅','304不锈钢','316不锈钢',
+               '麦饭石','陶瓷','纳米','石墨烯','远红外','负离子','活性','小分子','高纯度','浓缩']
     for p in products[:5]:
         title = p.get('title', '')
-        # Extract selling points from title
-        keywords = ['AI','智能','自动','免','无线','便携','防水','大容量','超长','静音','高清','专业',
-                    '升级','新款','原装','进口','天然','有机','活性','高纯度','医用','食品级','304不锈钢',
-                    '送','赠','礼盒','套装','限时','补贴','首单','学生','儿童','婴儿','孕妇','老人']
-        found = [kw for kw in keywords if kw in title]
+        found = [kw for kw in sell_kw if kw in title]
+        # 补充：如果关键词少于2个，从标题中提取2-4字高频实词作为补充
+        if len(found) < 2:
+            import re as _re
+            # 去掉HTML标签和特殊符号
+            clean = _re.sub(r'<[^>]+>', '', title)
+            clean = _re.sub(r'[【】（）\[\]\(\)\d+\.\s]', '', clean)
+            # 提取2-4字中文词
+            words = _re.findall(r'[一-鿿]{2,4}', clean)
+            # 排除无意义的停用词
+            stop = {'家用','厨房','专用','适用','通用','使用','一个','可以','以及','而且','因为','所以','如果','虽然','但是','不过','还是','或者','已经','这个','那个','什么','怎么','为什么'}
+            extra = [w for w in words if w not in stop and w not in found][:5]
+            found = found + extra
         top5_sp.append({
-            'rank': p.get('index', len(top5_sp)+1),
+            'rank': len(top5_sp)+1,
             'title': title[:60],
             'price': p.get('price',''),
             'sales': p.get('sales',''),
             'shop': p.get('shop','')[:20],
-            'brand': p.get('brand','')[:15],
+            'brand': (p.get('brand','') or '')[:15],
             'selling_points': found[:8],
             'is_new': bool(p.get('isRecent6m') or p.get('hasNewTitle') or p.get('isFirstPrice')),
             'is_ad': p.get('isAd', False)
