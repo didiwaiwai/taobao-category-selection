@@ -1604,15 +1604,6 @@ def generate_html(norm: dict, output_path: str):
         document.getElementById('r_margin').textContent=s>0?(gross/s*100).toFixed(0)+'%':'0%';
         document.getElementById('r_net_margin').textContent=s>0?(net/s*100).toFixed(0)+'%':'0%';
     }}
-        var comm=s*0.05;
-        var gross=s-c;
-        var net=s-c-h-p-comm-a-o;
-        document.getElementById('r_comm').textContent=comm.toFixed(1);
-        document.getElementById('r_gross').textContent=gross.toFixed(1);
-        document.getElementById('r_net').textContent=net.toFixed(1);
-        document.getElementById('r_margin').textContent=s>0?(gross/s*100).toFixed(0)+'%':'0%';
-        document.getElementById('r_net_margin').textContent=s>0?(net/s*100).toFixed(0)+'%':'0%';
-    }}
     redo();
     </script>'''
 
