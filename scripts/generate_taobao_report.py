@@ -443,7 +443,11 @@ def generate_1688_insight(norm):
     markup = avg_taobao_num / mid_cost if mid_cost > 0 else 0
     gross_margin = (avg_taobao_num - mid_cost) / avg_taobao_num * 100 if avg_taobao_num > 0 else 0
     platform_fee = avg_taobao_num * 0.05
-    net_profit = avg_taobao_num - mid_cost - platform_fee - 4.5
+    # Dynamic shipping estimate
+    if avg_taobao_num > 500: ship_fee = avg_taobao_num * 0.04
+    elif avg_taobao_num > 100: ship_fee = 8
+    else: ship_fee = 3.5
+    net_profit = avg_taobao_num - mid_cost - platform_fee - ship_fee
     net_margin = net_profit / avg_taobao_num * 100
 
     lines = []
@@ -1214,6 +1218,40 @@ def generate_excel(norm: dict, output_path: str):
         ws13.write(1, 0, '暂无1688数据', cell_fmt)
         ws13.write(2, 0, '运行 python scripts/collect_1688.py <关键词> 采集', cell_fmt)
 
+    # ========== Sheet 14: 利润计算器 ==========
+    ws14 = wb.add_worksheet('利润计算器')
+    ws14.write(0, 0, '项目', hdr_fmt); ws14.write(0, 1, '金额', hdr_fmt); ws14.write(0, 2, '备注', hdr_fmt)
+    ws14.set_column(0, 0, 18); ws14.set_column(1, 1, 15); ws14.set_column(2, 2, 30)
+    d1688_p = norm.get('data_1688', {})
+    mid_1688 = 0; avg_tb = 0
+    if d1688_p and d1688_p.get('prices'):
+        mid_1688 = sorted(d1688_p['prices'])[len(d1688_p['prices'])//2]
+    try: avg_tb = float(str(norm['market']['avg_price']).replace('¥','').replace(',',''))
+    except: pass
+    ship_est = avg_tb * 0.04 if avg_tb > 500 else (8 if avg_tb > 100 else 3.5)
+    pack_est = mid_1688 * 0.08 if mid_1688 > 0 else 1.5
+
+    row = 1
+    ws14.write(row, 0, '—— 收入 ——', hdr_fmt); ws14.merge_range(row, 0, row, 2, '', hdr_fmt); row += 1
+    ws14.write(row, 0, '淘宝零售均价', cell_fmt); ws14.write(row, 1, avg_tb, num_fmt); ws14.write(row, 2, '自动: data.json均价', cell_fmt); row += 1
+    row += 1
+    ws14.write(row, 0, '—— 成本 ——', hdr_fmt); ws14.merge_range(row, 0, row, 2, '', hdr_fmt); row += 1
+    ws14.write(row, 0, '1688批发价(中位)', cell_fmt); ws14.write(row, 1, mid_1688, num_fmt); ws14.write(row, 2, '自动: data_1688.json中位价, 可手动改', cell_fmt); row += 1
+    ws14.write(row, 0, '快递费/单', cell_fmt); ws14.write(row, 1, ship_est, num_fmt); ws14.write(row, 2, '自动: 按售价估算, 可手动改', cell_fmt); row += 1
+    ws14.write(row, 0, '包装费/单', cell_fmt); ws14.write(row, 1, pack_est, num_fmt); ws14.write(row, 2, '自动: 批发价8%, 可手动改', cell_fmt); row += 1
+    ws14.write(row, 0, '平台佣金(5%)', cell_fmt); ws14.write(row, 1, f'=B3*0.05', cell_fmt); ws14.write(row, 2, '公式: 售价×5%', cell_fmt); row += 1
+    ws14.write(row, 0, '推广费/单', cell_fmt); ws14.write(row, 1, 0, num_fmt); ws14.write(row, 2, '手动填写: 日推广费/日单量', cell_fmt); row += 1
+    ws14.write(row, 0, '其他成本/单', cell_fmt); ws14.write(row, 1, 0, num_fmt); ws14.write(row, 2, '手动: 人工/仓储/退货损耗等', cell_fmt); row += 1
+    row += 1
+    ws14.write(row, 0, '—— 利润 ——', hdr_fmt); ws14.merge_range(row, 0, row, 2, '', hdr_fmt); row += 1
+    ws14.write(row, 0, '单件毛利', cell_fmt); ws14.write(row, 1, '=B3-B5', cell_fmt); ws14.write(row, 2, '售价-批发价', cell_fmt); row += 1
+    ws14.write(row, 0, '单件净利', cell_fmt); ws14.write(row, 1, '=B3-B5-B6-B7-B8-B10-B11', cell_fmt); ws14.write(row, 2, '售价-所有成本', cell_fmt); row += 1
+    ws14.write(row, 0, '毛利率', cell_fmt); ws14.write(row, 1, '=B12/B3', pct_fmt); ws14.write(row, 2, '毛利/售价', cell_fmt); row += 1
+    ws14.write(row, 0, '净利率', cell_fmt); ws14.write(row, 1, '=B13/B3', pct_fmt); ws14.write(row, 2, '净利/售价', cell_fmt); row += 1
+    row += 1
+    ws14.write(row, 0, '月固定成本', cell_fmt); ws14.write(row, 1, 0, num_fmt); ws14.write(row, 2, '手动: 月租金/工资/水电等', cell_fmt); row += 1
+    ws14.write(row, 0, '月盈亏平衡(件)', cell_fmt); ws14.write(row, 1, '=IF(B13>0,CEILING(B17/B13,1),"-")', cell_fmt); ws14.write(row, 2, '月固定成本/单件净利', cell_fmt)
+
     wb.close()
     return output_path
 
@@ -1468,7 +1506,65 @@ def generate_html(norm: dict, output_path: str):
         t_dyn = ''
 
     # 深度分析 (转义HTML)
-    analysis_safe = analysis.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
+    analysis_html_safe = analysis_html
+
+    # ---- 利润计算器数据 ----
+    # 1688 中位价和淘宝均价作为默认值
+    profit_1688_median = 0
+    profit_taobao_avg = 0
+    if d1688 and d1688.get('prices'):
+        ps = d1688['prices']
+        profit_1688_median = sorted(ps)[len(ps)//2]
+    try:
+        profit_taobao_avg = float(str(m['avg_price']).replace('¥','').replace(',',''))
+    except: pass
+
+    def ship_estimate(price):
+        if price > 500: return round(price * 0.04, 1)
+        elif price > 100: return 8.0
+        return 3.5
+
+    profit_ship = ship_estimate(profit_taobao_avg)
+    profit_pack = round(profit_1688_median * 0.08, 1) if profit_1688_median > 0 else 1.5
+
+    t_profit_calc = f'''<div class="calc-grid">
+    <div class="calc-card"><h4>成本输入</h4>
+    <table><tr><td>1688批发价</td><td><input id="c_cost" type="number" value="{profit_1688_median:.1f}" step="0.1" oninput="redo()"></td></tr>
+    <tr><td>淘宝零售价</td><td><input id="c_sell" type="number" value="{profit_taobao_avg:.1f}" step="0.1" oninput="redo()"></td></tr>
+    <tr><td>快递费/单</td><td><input id="c_ship" type="number" value="{profit_ship:.1f}" step="0.1" oninput="redo()"></td></tr>
+    <tr><td>包装费/单</td><td><input id="c_pack" type="number" value="{profit_pack:.1f}" step="0.1" oninput="redo()"></td></tr>
+    <tr><td>推广费/单</td><td><input id="c_ad" type="number" value="0" step="0.1" oninput="redo()"></td></tr>
+    <tr><td>其他成本/单</td><td><input id="c_other" type="number" value="0" step="0.1" oninput="redo()"></td></tr>
+    <tr><td>月固定成本</td><td><input id="c_fixed" type="number" value="0" step="100" oninput="redo()"></td></tr></table></div>
+    <div class="calc-card calc-result"><h4>利润结果</h4>
+    <table><tr><td>平台佣金(5%)</td><td id="r_comm">0</td></tr>
+    <tr><td>单件毛利</td><td id="r_gross">0</td></tr>
+    <tr><td><b>单件净利</b></td><td><b id="r_net">0</b></td></tr>
+    <tr><td>毛利率</td><td id="r_margin">0%</td></tr>
+    <tr><td>净利率</td><td id="r_net_margin">0%</td></tr>
+    <tr><td>月盈亏平衡(件)</td><td id="r_breakeven">0</td></tr></table></div></div>
+    <p style="margin-top:12px;color:#888;font-size:12px">默认值来自1688中位批发价和淘宝零售均价，可手动修改。月盈亏平衡=月固定成本/单件净利。</p>
+    <script>
+    function redo(){{
+        var s=parseFloat(document.getElementById('c_sell').value)||0;
+        var c=parseFloat(document.getElementById('c_cost').value)||0;
+        var h=parseFloat(document.getElementById('c_ship').value)||0;
+        var p=parseFloat(document.getElementById('c_pack').value)||0;
+        var a=parseFloat(document.getElementById('c_ad').value)||0;
+        var o=parseFloat(document.getElementById('c_other').value)||0;
+        var f=parseFloat(document.getElementById('c_fixed').value)||0;
+        var comm=s*0.05;
+        var gross=s-c;
+        var net=s-c-h-p-comm-a-o;
+        document.getElementById('r_comm').textContent=comm.toFixed(1);
+        document.getElementById('r_gross').textContent=gross.toFixed(1);
+        document.getElementById('r_net').textContent=net.toFixed(1);
+        document.getElementById('r_margin').textContent=s>0?(gross/s*100).toFixed(0)+'%':'0%';
+        document.getElementById('r_net_margin').textContent=s>0?(net/s*100).toFixed(0)+'%':'0%';
+        document.getElementById('r_breakeven').textContent=net>0?Math.ceil(f/net):'-';
+    }}
+    redo();
+    </script>'''
 
     # ---- 组装HTML ----
     html = '''<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">
@@ -1524,6 +1620,15 @@ tr:hover td{background:#f0f4ff}
 .analysis .a-bad{background:#fee2e2;color:#991b1b;padding:0 4px;border-radius:2px}
 .analysis .a-tip{background:#dbeafe;color:#1e40af;padding:0 4px;border-radius:2px}
 .analysis p{margin:8px 0;color:#444}
+/* 利润计算器 */
+.calc-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.calc-card{background:#f8fafc;border-radius:8px;padding:14px}
+.calc-card h4{font-size:14px;color:#334155;margin-bottom:10px}
+.calc-card.calc-result{background:#f0fdf4;border:1px solid #bbf7d0}
+.calc-card input{width:100px;padding:4px 8px;border:1px solid #cbd5e1;border-radius:4px;font-size:13px}
+.calc-card input:focus{outline:none;border-color:#3b82f6;box-shadow:0 0 0 2px rgba(59,130,246,.2)}
+.calc-card td{padding:3px 8px;border:none}
+.calc-card b{color:#166534}
 </style></head><body>
 <div class="container">
 <h1>\U0001f50d %s — 淘宝品类选品分析</h1>
@@ -1555,8 +1660,9 @@ tr:hover td{background:#f0f4ff}
 <button class="tab" onclick="sw(8,'tab','panel')"><span class="ico">&#x1f3ea;</span>店铺</button>
 <button class="tab" onclick="sw(9,'tab','panel')"><span class="ico">&#x1f4e6;</span>产品清单</button>
 <button class="tab" onclick="sw(10,'tab','panel')"><span class="ico">&#x1f3ed;</span>1688</button>
-<button class="tab" onclick="sw(11,'tab','panel')"><span class="ico">&#x1f50d;</span>数据质量</button>
-<button class="tab" onclick="sw(12,'tab','panel')"><span class="ico">&#x1f4dd;</span>深度分析</button>
+<button class="tab" onclick="sw(11,'tab','panel')"><span class="ico">&#x1f4b2;</span>利润计算</button>
+<button class="tab" onclick="sw(12,'tab','panel')"><span class="ico">&#x1f50d;</span>数据质量</button>
+<button class="tab" onclick="sw(13,'tab','panel')"><span class="ico">&#x1f4dd;</span>深度分析</button>
 </div>
 
 <!-- Panel 0: 选品建议 -->
@@ -1572,8 +1678,9 @@ tr:hover td{background:#f0f4ff}
 <div class="panel" id="panel8"><h3>\U0001f3ea 店铺分析</h3>%s%s</div>
 <div class="panel" id="panel9"><h3>\U0001f4e6 产品清单 (Top 20)</h3>%s</div>
 <div class="panel" id="panel10"><h3>\U0001f3ed 1688供应链</h3>%s%s%s</div>
-<div class="panel" id="panel11"><h3>\U0001f50d 数据质量</h3>%s</div>
-<div class="panel" id="panel12"><div class="analysis">%s</div></div>
+<div class="panel" id="panel11"><h3>\U0001f4b2 利润计算器</h3>%s</div>
+<div class="panel" id="panel12"><h3>\U0001f50d 数据质量</h3>%s</div>
+<div class="panel" id="panel13"><div class="analysis">%s</div></div>
 </div>
 
 <script>
@@ -1600,6 +1707,7 @@ new Chart(document.getElementById('sc'),{type:'bar',data:{labels:%s,datasets:[{l
         t_market, t_growth, t_comp, t_barrier, t_profit,
         t_pb, t_brands, t_shops, t_loc,
         t_products, t_1688, t_1688_products, t_dyn,
+        t_profit_calc,  # 利润计算器面板
         t_quality,
         analysis_html,  # 格式化后的深度分析
         json.dumps(dim_names, ensure_ascii=False), json.dumps(dim_scores),
