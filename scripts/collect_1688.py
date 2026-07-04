@@ -1,19 +1,17 @@
 #!/usr/bin/env python3
 """
-1688采购成本采集工具
+1688采购成本采集工具 — mtop API版 (与淘宝同架构)
 使用方法:
-  python scripts/collect_1688.py <关键词> [--tab <tab_id>]
+  python scripts/collect_1688.py <关键词>
 
 流程:
-  1. 自动打开1688搜索页
-  2. 等待用户手动过验证码(如需)
-  3. 提取批发价格
-  4. 保存为 data_1688.json
+  1. 复用1688标签页, goto GBK-URL搜索页 (加载mtop库+pageId)
+  2. 调用 1688/offer-score adapter (纯mtop API, 不爬DOM)
+  3. 保存 data_<关键词>_1688.json
 """
 
-import subprocess, json, sys, os, time, re, shutil
+import subprocess, json, sys, os, re, time, shutil
 
-# 自动定位 bb-browser
 BB_BROWSER = shutil.which('bb-browser') or shutil.which('bb-browser.cmd')
 if not BB_BROWSER:
     npm_global = os.path.expandvars(r'%APPDATA%\npm')
@@ -21,118 +19,126 @@ if not BB_BROWSER:
         p = os.path.join(npm_global, name)
         if os.path.exists(p): BB_BROWSER = p; break
 if not BB_BROWSER:
-    print("错误: 找不到 bb-browser, 请先安装: npm install -g bb-browser")
+    print("Error: bb-browser not found")
     sys.exit(1)
 
-def bb(*args):
-    try:
-        r = subprocess.run([BB_BROWSER] + list(args), capture_output=True, encoding='utf-8', errors='replace')
-        return r
-    except Exception as e:
-        print(f"  bb-browser error: {e}")
-        return None
+TAB_CACHE_FILE = os.path.join(os.path.dirname(__file__), '.1688_tab')
+
+def get_or_create_tab():
+    if os.path.exists(TAB_CACHE_FILE):
+        with open(TAB_CACHE_FILE, 'r') as f:
+            saved = f.read().strip()
+        r = subprocess.run([BB_BROWSER, 'eval', '--tab', saved, 'document.title'],
+                          capture_output=True, timeout=10)
+        if r.returncode == 0 and r.stdout.strip():
+            return saved
+    r = subprocess.run([BB_BROWSER, 'open', 'https://www.1688.com/'],
+                      capture_output=True, timeout=30)
+    m = re.search(rb'tab:\s*(\S+)', r.stdout)
+    if m:
+        tab = m.group(1).decode()
+        with open(TAB_CACHE_FILE, 'w') as f:
+            f.write(tab)
+        time.sleep(3)
+        return tab
+    raise RuntimeError("Cannot create 1688 tab")
 
 def main():
     if len(sys.argv) < 2:
-        print("用法: python collect_1688.py <关键词> [--tab <tab_id>]")
-        print("示例: python collect_1688.py 折叠屏手机壳")
+        print("Usage: python collect_1688.py <keyword> [--pages N]")
         sys.exit(1)
 
     keyword = sys.argv[1]
-    tab_id = None
-    if '--tab' in sys.argv:
-        tab_id = sys.argv[sys.argv.index('--tab') + 1]
-
-    print(f"[1/4] 打开1688搜索: {keyword}")
-    # 打开1688搜索
-    url = f'https://s.1688.com/selloffer/offer_search.htm?keywords={keyword}'
-
-    if tab_id:
-        result = bb('goto', url, '--tab', tab_id)
-    else:
-        result = bb('open', url)
-        # 提取新标签页ID
-        match = re.search(r'tab:\s*(\S+)', result.stdout)
-        if match:
-            tab_id = match.group(1)
-
-    if not tab_id:
-        print("错误: 无法获取1688标签页ID")
-        sys.exit(1)
-
-    print(f"  标签页: {tab_id}")
-    print(f"[2/4] 等待页面加载(5秒)...")
-    time.sleep(5)
-
     auto_mode = '--auto' in sys.argv
 
-    # 检查是否需要验证码
-    snap = bb('snap', '--tab', tab_id, '-d', '2')
-    snap_text = snap.stdout if snap else ''
-    if '验证码' in snap_text or 'punish' in snap_text:
-        if auto_mode:
-            print("  ⚠️ 1688验证码拦截,自动跳过")
-            sys.exit(0)
-        print("  ⚠️ 1688需要滑块验证,请手动在Chrome中完成验证...")
-        print("  完成后按Enter继续")
-        input()
-        time.sleep(2)
+    # 1. GBK URL + goto
+    gbk = ''.join(['%{:02X}'.format(b) for b in keyword.encode('gbk')])
+    url = f'https://s.1688.com/selloffer/offer_search.htm?keywords={gbk}'
 
-    print("[3/4] 提取价格数据...")
-    # JavaScript提取
-    extract_js = """(function() {
-        var prices = [];
-        var text = document.body.innerText;
-        var re = /[\\u00a5]\\s*(\\d+\\.?\\d*)/g;
-        var m;
-        while ((m = re.exec(text)) !== null) {
-            var v = parseFloat(m[1]);
-            if (v > 1 && v < 500 && prices.indexOf(v) === -1) prices.push(v);
-        }
-        if (prices.length < 3) {
-            document.querySelectorAll('*').forEach(function(el) {
-                var t = el.innerText;
-                if (t && t.length < 15 && /^[0-9.]+$/.test(t.trim())) {
-                    var n = parseFloat(t);
-                    if (n > 1 && n < 500 && prices.length < 40) prices.push(n);
-                }
-            });
-        }
-        prices.sort(function(a,b) { return a-b; });
-        return JSON.stringify({prices: prices.slice(0, 25)});
-    })()"""
+    tab = get_or_create_tab()
+    print(f"[1/2] Open search: {keyword} (tab: {tab})")
+    subprocess.run([BB_BROWSER, 'goto', '--tab', tab, url],
+                  capture_output=True, timeout=30)
+    time.sleep(6)
 
-    result = bb('eval', '--tab', tab_id, extract_js)
+    # 2. Run adapter (mtop API only, no DOM scraping)
+    print(f"[2/2] Query mtop API...")
+    result = subprocess.run(
+        [BB_BROWSER, 'site', '1688/offer-score', keyword, '--json'],
+        capture_output=True, timeout=180
+    )
 
     try:
-        data = json.loads(result.stdout.strip())
-        prices = data.get('prices', [])
-        if not prices:
-            print("  未提取到价格数据")
+        stdout = result.stdout.decode('utf-8', errors='replace')
+        json_line = ''
+        for line in stdout.split('\n'):
+            line = line.strip()
+            if line.startswith('{'):
+                json_line = line
+                break
+        if not json_line:
+            json_line = stdout.strip()
+
+        raw = json.loads(json_line)
+        data = raw.get('result', raw)
+
+        if data.get('error'):
+            detail = data.get('detail','') or data.get('hint','') or ''
+            print(f"  Error: {data['error']} — {detail}")
+            if 'no_page_id' in str(data.get('error','')):
+                if os.path.exists(TAB_CACHE_FILE): os.remove(TAB_CACHE_FILE)
             sys.exit(1)
 
-        # 过滤噪音，保留合理价格区间
-        valid_prices = [p for p in prices if 1 < p < 1000]
-        if len(valid_prices) > 10:
-            # 去重并排序
-            valid_prices = sorted(set(valid_prices))
+        prices = data.get('prices', [])
+        valid = sorted(set([p for p in prices if 0.05 < p < 50000]))
+        stats = data.get('stats', {})
+        seg = data.get('priceSegments', {})
 
-        print(f"  提取到 {len(valid_prices)} 个价格: ¥{min(valid_prices):.0f} ~ ¥{max(valid_prices):.0f}")
+        print(f"  Products: {data.get('totalProducts',0)} ({data.get('dedupedProducts',0)} unique)")
+        print(f"  Pages: {data.get('pagesCrawled',0)} x {60} items")
+        print(f"  Prices: {len(valid)} | Range: {min(valid):.2f}~{max(valid):.2f} | Median: {stats.get('median',0):.2f}")
+        print(f"  Match: {data.get('keywordMatch',0):.0%} | Method: {data.get('method','?')}")
 
-        # 保存
-        output = {'prices': valid_prices}
+        # Product list for report
+        plist = []
+        for p in data.get('products', [])[:25]:
+            plist.append({
+                'title': p.get('title', '')[:60],
+                'price': p.get('price', 0),
+                'sales': p.get('sales', 0),
+                'shop': str(p.get('shop', ''))[:25],
+                'repurchase': p.get('repurchase', 0)
+            })
+
+        output = {
+            'prices': valid,
+            'total_products_scraped': data.get('totalProducts', 0),
+            'deduped_products': data.get('dedupedProducts', 0),
+            'pages_scraped': data.get('pagesCrawled', 0),
+            'stats': stats,
+            'price_segments': {
+                'budget_0_50': seg.get('budget', 0),
+                'mid_50_150': seg.get('mid', 0),
+                'premium_150_500': seg.get('premium', 0),
+                'high_500_plus': seg.get('high', 0),
+            },
+            'keyword': keyword,
+            'keyword_match': data.get('keywordMatch', 0),
+            'source': '1688 mtop API',
+            'products': plist
+        }
+
         output_path = '/tmp/taobao_data_1688.json' if auto_mode else f'data_{keyword}_1688.json'
         with open(output_path, 'w', encoding='utf-8') as f:
-            json.dump(output, f, ensure_ascii=False)
-
-        print(f"[4/4] 保存到: {output_path}")
-        print(f"\n下一步: python scripts/generate_taobao_report.py data.json")
-        print(f"  (确保 data_{keyword}_1688.json 与 data.json 在同一目录)")
+            json.dump(output, f, ensure_ascii=False, indent=2)
+        print(f"  Saved: {output_path}")
 
     except json.JSONDecodeError:
-        print(f"  解析失败,原始输出: {result.stdout[:200]}")
+        print(f"  JSON parse error: {stdout[:200]}")
         sys.exit(1)
-
+    except Exception as e:
+        print(f"  Error: {e}")
+        sys.exit(1)
 
 if __name__ == '__main__':
     main()

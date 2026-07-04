@@ -457,17 +457,29 @@ def generate_1688_insight(norm):
     lines.append(f'| 预估净利/单 | ¥{net_profit:.1f} ({net_margin:.0f}%) |')
     lines.append('')
     lines.append(f'**成本拆解** (以中位批发¥{mid_cost:.0f}为例):')
-    lines.append(f'- 原料+生产: ¥{mid_cost:.0f}')
-    lines.append(f'- 包装(瓶+盒): ¥1.5-3.0')
-    lines.append(f'- 快递: ¥2.5-3.5')
+    lines.append(f'- 采购成本: ¥{mid_cost:.0f}')
+    if avg_taobao_num > 500:
+        lines.append(f'- 包装/辅料: ¥{mid_cost*0.08:.0f}-{mid_cost*0.15:.0f}')
+        ship_est = avg_taobao_num * 0.04
+        lines.append(f'- 快递物流: ¥{ship_est:.0f}')
+    elif avg_taobao_num > 100:
+        lines.append(f'- 包装/辅料: ¥{mid_cost*0.05:.0f}-{mid_cost*0.12:.0f}')
+        lines.append(f'- 快递: ¥8')
+    else:
+        lines.append(f'- 包装/辅料: ¥{mid_cost*0.03:.0f}-{mid_cost*0.08:.0f}')
+        lines.append(f'- 快递: ¥3.5')
     lines.append(f'- 平台佣金(~5%): ¥{platform_fee:.1f}')
     lines.append(f'- **单件净利: ¥{net_profit:.1f}**')
     lines.append('')
     lines.append(f'**供应链建议**:')
-    lines.append(f'- 起订量500-1000支,单款首批投入约¥{mid_cost*500:.0f}-¥{mid_cost*1000:.0f}')
-    lines.append(f'- 广州白云区/义乌化妆品产业带集中,精油类代工厂充足')
+    moq = max(100, int(5000/mid_cost)) if mid_cost > 0 else 500
+    lines.append(f'- 1688起订量约{moq}件起, 首批建议{moq}-{moq*3}件试水')
+    if avg_taobao_num > 500:
+        lines.append(f'- 大件商品, 务必和物流公司谈协议价降低成本')
+    else:
+        lines.append(f'- 控制包装和快递成本是盈利关键')
     if gross_margin > 60:
-        lines.append(f'- 🔥 毛利率{gross_margin:.0f}%极高,有充足空间做包装升级和内容营销')
+        lines.append(f'- 毛利率{gross_margin:.0f}%极高,有充足空间做包装升级和内容营销')
     elif gross_margin > 40:
         lines.append(f'- 毛利率{gross_margin:.0f}%尚可,控制包装成本后可盈利')
     else:
@@ -709,12 +721,22 @@ def generate_data_brief(norm: dict) -> str:
         brief += f"- 批发价区间: ¥{min(prices_1688)} ~ ¥{max(prices_1688)}\n"
         mid_1688 = sorted(prices_1688)[len(prices_1688)//2]
         brief += f"- 中位批发价: ¥{mid_1688}\n"
+        brief += f"- 采集产品: {d1688.get("total_products_scraped","?")}条/{d1688.get("pages_scraped","?")}页\n"
         try:
             avg_t = float(str(m['avg_price']).replace('¥','').replace(',',''))
             markup = avg_t / mid_1688 if mid_1688 > 0 else 0
             gross = (avg_t - mid_1688) / avg_t * 100
             brief += f"- 零售/批发比: {markup:.1f}x | 预估毛利率: {gross:.0f}%\n"
         except: pass
+        # 1688产品列表 (Top 10)
+        plist = d1688.get('products', [])
+        if plist:
+            brief += '\n### 1688产品列表 (Top 10)\n'
+            brief += '| # | 产品 | 批发价 | 供应商 | 销量 |\n'
+            brief += '|---|------|--------|--------|------|\n'
+            for i, pr in enumerate(plist[:10], 1):
+                brief += f'| {i} | {pr.get("title","")[:40]} | Y{pr.get("price",0)} | {pr.get("shop","")[:15]} | {pr.get("sales","")} |\n'
+            brief += '\n> 请基于以上1688实际产品数据，在供应链分析中引用具体产品和价格，给出可落地的选品和定价建议。\n'
 
     brief += f'''
 ### 你的任务
@@ -1147,21 +1169,47 @@ def generate_excel(norm: dict, output_path: str):
         except: pass
         row += 1
         ws13.write(row, 0, '成本构成估算', hdr_fmt); ws13.write(row, 1, '金额/单', hdr_fmt); row += 1
-        ws13.write(row, 0, '原料+生产', cell_fmt); ws13.write(row, 1, f'¥{mid_p:.0f}', cell_fmt); row += 1
-        ws13.write(row, 0, '包装(瓶+盒)', cell_fmt); ws13.write(row, 1, '¥1.5-3.0', cell_fmt); row += 1
-        ws13.write(row, 0, '快递', cell_fmt); ws13.write(row, 1, '¥2.5-3.5', cell_fmt); row += 1
+        ws13.write(row, 0, '采购成本', cell_fmt); ws13.write(row, 1, f'¥{mid_p:.0f}', cell_fmt); row += 1
+        # 动态包装/快递估算
+        if avg_t > 500: pack_est = f'¥{mid_p*0.08:.0f}-{mid_p*0.15:.0f}'
+        else: pack_est = f'¥{mid_p*0.05:.0f}-{mid_p*0.12:.0f}'
+        ws13.write(row, 0, '包装/辅料', cell_fmt); ws13.write(row, 1, pack_est, cell_fmt); row += 1
+        if avg_t > 500: ship_est = avg_t * 0.04
+        elif avg_t > 100: ship_est = 8
+        else: ship_est = 3.5
+        ws13.write(row, 0, '快递物流', cell_fmt); ws13.write(row, 1, f'¥{ship_est:.1f}', cell_fmt); row += 1
         ws13.write(row, 0, '平台佣金(~5%)', cell_fmt); ws13.write(row, 1, f'¥{platform:.1f}', cell_fmt); row += 1
         row += 1
         ws13.write(row, 0, '供应链建议', hdr_fmt); ws13.merge_range(row, 0, row, 1, '', hdr_fmt); row += 1
-        tips = [
-            f'1. 起订量500-1000支,单款投入¥{mid_p*500:.0f}-¥{mid_p*1000:.0f}',
-            '2. 广州白云区/义乌化妆品产业带集中,建议实地看厂选品',
-            '3. 包装瓶+纸盒成本占50%+,优先在包装设计上做差异化',
-            '4. 精油配方比普通指缘油溢价¥3-5/支,但需要香精供应商配合调香',
-            '5. 首批3-5个SKU(不同香型),用同一瓶型降低模具费',
-        ]
+        tips = [f'1. 1688批发中位价¥{mid_p:.0f},零售均价¥{avg_t:.0f},毛利率约{gross:.0f}%']
+        if len(prices) > 20: tips.append('2. 价格跨度大,建议按品质分层选品(低/中/高三档)')
+        else: tips.append('2. 价格集中度高,建议主攻中位价附近的产品定位')
+        if avg_t > 500:
+            tips.append(f'3. 大件商品,快递成本约¥{ship_est:.0f}/单,务必和物流公司谈协议价')
+            tips.append('4. 高客单品类,备货资金门槛较高,建议小批试产后快速迭代')
+        elif avg_t > 100:
+            tips.append(f'3. 中等客单,快递约¥{ship_est:.0f}/单,控制包装成本是关键')
+            tips.append('4. 可考虑组合销售(套装/多件)提高客单价和毛利')
+        else:
+            tips.append('3. 低价品类,快递和包装占比高,必须走量维持利润')
+            tips.append('4. 单价低不适合单件销售,建议做多件装/套装提升客单价')
+        tips.append(f'5. 起订量建议: 首批{max(100,int(5000/mid_p))}-{max(500,int(20000/mid_p))}件,试水市场反馈')
         for tip in tips:
             ws13.write(row, 0, tip, cell_fmt); ws13.merge_range(row, 0, row, 1, tip, cell_fmt); row += 1
+        # 1688产品列表 (Top 20)
+        products_1688 = d1688.get('products', [])
+        if products_1688:
+            row += 1
+            ws13.write(row, 0, '1688产品列表 (Top 20)', hdr_fmt); ws13.merge_range(row, 0, row, 3, '', hdr_fmt); row += 1
+            ws13.write(row, 0, '#', hdr_fmt); ws13.write(row, 1, '产品标题', hdr_fmt)
+            ws13.write(row, 2, '批发价', hdr_fmt); ws13.write(row, 3, '供应商', hdr_fmt)
+            ws13.set_column(1, 1, 50); ws13.set_column(3, 3, 25)
+            for i, pr in enumerate(products_1688[:20], 1):
+                ws13.write(row, 0, i, cell_fmt)
+                ws13.write(row, 1, pr.get('title', '')[:60], cell_fmt)
+                ws13.write(row, 2, pr.get('price', 0), num_fmt)
+                ws13.write(row, 3, pr.get('shop', ''), cell_fmt)
+                row += 1
     else:
         ws13.write(1, 0, '暂无1688数据', cell_fmt)
         ws13.write(2, 0, '运行 python scripts/collect_1688.py <关键词> 采集', cell_fmt)
@@ -1175,263 +1223,393 @@ def generate_excel(norm: dict, output_path: str):
 # ============================================================
 
 def generate_html(norm: dict, output_path: str):
-    """生成 HTML 仪表板 (Chart.js)"""
-    dims = norm['dimensions']
-    s = norm['scoring']
+    """生成统一 HTML 仪表板 — 保留原有图表布局 + 标签页展示Excel全部数据 + 深度分析"""
+    import re as _re
 
+    dims = norm['dimensions']
+    s = norm['scoring']; m = norm['market']
+    g = norm['growth']; c = norm['competition']
+    b = norm['barrier']; p = norm['profit']
+    dq = norm['data_quality']
+
+    # 图表数据
     dim_names = ['市场规模', '增长潜力', '竞争烈度', '进入壁垒', '利润空间']
     dim_keys = ['marketSize', 'growthPotential', 'competition', 'entryBarrier', 'profitMargin']
     dim_scores = [dims[k]['score'] for k in dim_keys]
     dim_maxs = [dims[k]['max'] for k in dim_keys]
 
     price_bands = norm.get('price_bands', [])
-    pb_labels = [p['label'] for p in price_bands]
-    pb_counts = [p['count'] for p in price_bands]
-
-    shops = norm.get('top_shops', [])[:5]
-    shop_labels = [s['shop'][:8] for s in shops]
-    shop_sales = [s['sales'] for s in shops]
-
-    # Build JS scripts separately (avoid f-string brace escaping issues)
-    js_scripts = f'''
-<script>
-new Chart(document.getElementById('radarChart'), {{
-    type: 'radar',
-    data: {{
-        labels: {json.dumps(dim_names, ensure_ascii=False)},
-        datasets: [{{
-            label: '得分',
-            data: {json.dumps(dim_scores)},
-            borderColor: '#4472C4',
-            backgroundColor: 'rgba(68,114,196,0.2)'
-        }}]
-    }},
-    options: {{
-        scales: {{
-            r: {{ suggestedMin: 0, suggestedMax: {max(dim_maxs)} }}
-        }}
-    }}
-}});
-
-new Chart(document.getElementById('priceChart'), {{
-    type: 'bar',
-    data: {{
-        labels: {json.dumps(pb_labels, ensure_ascii=False)},
-        datasets: [{{
-            label: '产品数',
-            data: {json.dumps(pb_counts)},
-            backgroundColor: '#4472C4'
-        }}]
-    }}
-}});
-
-new Chart(document.getElementById('shopChart'), {{
-    type: 'bar',
-    data: {{
-        labels: {json.dumps(shop_labels, ensure_ascii=False)},
-        datasets: [{{
-            label: '预估销量',
-            data: {json.dumps(shop_sales)},
-            backgroundColor: '#5B9BD5'
-        }}]
-    }}
-}});
-</script>'''
-
-    html = f'''<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="UTF-8">
-<title>{norm['query']} - 淘宝品类选品分析</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
-<style>
-*{{margin:0;padding:0;box-sizing:border-box}}
-body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f5f7fa;color:#333;padding:20px}}
-.container{{max-width:1200px;margin:0 auto}}
-h1{{text-align:center;margin-bottom:5px;font-size:24px}}
-.subtitle{{text-align:center;color:#888;margin-bottom:20px;font-size:14px}}
-.score-big{{text-align:center;margin:15px 0;font-size:48px;font-weight:bold;color:{"#22c55e" if s["total"]>=80 else "#3b82f6" if s["total"]>=70 else "#f59e0b" if s["total"]>=50 else "#ef4444"}}}
-.rating-badge{{display:inline-block;padding:4px 16px;border-radius:20px;font-weight:bold;font-size:18px;background:{"#C6EFCE" if s["total"]>=80 else "#BDD7EE" if s["total"]>=70 else "#FFEB9C" if s["total"]>=50 else "#FFC7CE"}}}
-.grid{{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:20px}}
-.card{{background:#fff;border-radius:12px;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,.1)}}
-.card h3{{margin-bottom:12px;font-size:16px;color:#555}}
-.card.full{{grid-column:1/-1}}
-table{{width:100%;border-collapse:collapse;font-size:14px}}
-th{{background:#4472C4;color:#fff;padding:8px 12px;text-align:left;font-weight:bold}}
-td{{padding:8px 12px;border-bottom:1px solid #eee}}
-tr:hover td{{background:#f0f4ff}}
-</style>
-</head>
-<body>
-<div class="container">
-<h1>🔍 {norm['query']} — 淘宝品类选品分析</h1>
-<p class="subtitle">模型: {norm['model_version']} | 分析产品: {norm['analyzed_count']} | {datetime.now().strftime('%Y-%m-%d %H:%M')} | 数据源: 淘宝/天猫</p>
-
-<div style="text-align:center">
-<span class="rating-badge">{s["rating"]}</span>
-<div class="score-big">{s["total"]}<span style="font-size:20px;color:#999">/100</span></div>
-<p style="font-size:15px;color:#666;margin-top:5px">{s["recommendation"]}</p>
-</div>
-
-<div class="grid">
-<div class="card">
-<h3>五维评分</h3>
-<canvas id="radarChart" height="280"></canvas>
-</div>
-<div class="card">
-<h3>市场概况</h3>
-<table>
-<tr><td><strong>预估总销量</strong></td><td>{norm["market"]["total_sales"]:,} 件</td></tr>
-<tr><td><strong>平均价格</strong></td><td>{norm["market"]["avg_price"]}</td></tr>
-<tr><td><strong>天猫占比</strong></td><td>{norm["market"]["tmall_ratio"]}</td></tr>
-<tr><td><strong>店铺CR3</strong></td><td>{norm["competition"]["cr3_store"]}</td></tr>
-<tr><td><strong>HHI指数</strong></td><td>{norm["competition"]["hhi"]}</td></tr>
-<tr><td><strong>壁垒类型</strong></td><td>{norm["barrier"]["barrier_type"]}</td></tr>
-</table>
-</div>
-<div class="card">
-<h3>价格带分布</h3>
-<canvas id="priceChart" height="220"></canvas>
-</div>
-<div class="card">
-<h3>Top 5 店铺</h3>
-<canvas id="shopChart" height="220"></canvas>
-</div>
-<div class="card full">
-<h3>评分详情</h3>
-<table>
-<tr><th>维度</th><th>得分</th><th>满分</th><th>分析</th></tr>
-'''
-    for i, key in enumerate(dim_keys):
-        d = dims[key]
-        html += f'<tr><td>{dim_names[i]}</td><td><strong>{d["score"]}</strong></td><td>{d["max"]}</td><td>{d["label"]}</td></tr>\n'
-
-    html += f'''
-</table>
-</div>
-<div class="card full">
-<h3>选品建议</h3>
-<table>
-<tr><td><strong>优势</strong></td><td>{generate_advantages(norm).replace(chr(10),'<br>')}</td></tr>
-<tr><td><strong>劣势</strong></td><td>{generate_disadvantages(norm).replace(chr(10),'<br>')}</td></tr>
-<tr><td><strong>机会</strong></td><td>{generate_opportunities(norm).replace(chr(10),'<br>')}</td></tr>
-<tr><td><strong>威胁</strong></td><td>{generate_threats(norm).replace(chr(10),'<br>')}</td></tr>
-<tr><td><strong>适合卖家</strong></td><td>{suitable_seller(norm)}</td></tr>
-</table>
-</div>
-</div>
-'''
-    html += js_scripts
-    html += f'''
-</div>
-</div>
-</body>
-</html>'''
-
-    with open(output_path, 'w', encoding='utf-8') as f:
-        f.write(html)
-
-
-def generate_html_full(norm: dict, output_path: str):
-    """生成增强版 HTML 仪表板 — 六标签页展示所有数据"""
-    s = norm['scoring']; m = norm['market']; dims = norm['dimensions']
-    products = norm.get('products', [])[:20]
-    brands = norm.get('top_brands', [])[:10]
     shops = norm.get('top_shops', [])[:10]
-    price_bands = norm.get('price_bands', [])
+    products = norm.get('products', [])
+    brands = norm.get('top_brands', [])
     d1688 = norm.get('data_1688', {})
     analysis = norm.get('llm_analysis', '> 暂无深度分析')
+    stypes = norm.get('shop_types', {})
+    locs = norm.get('top_locations', [])
 
-    # 基础数据
-    dim_names = json.dumps(['市场规模','增长潜力','竞争烈度','进入壁垒','利润空间'], ensure_ascii=False)
-    dim_scores = json.dumps([dims[k]['score'] for k in ['marketSize','growthPotential','competition','entryBarrier','profitMargin']])
-    pb_labels = json.dumps([p['label'] for p in price_bands], ensure_ascii=False)
-    pb_counts = json.dumps([p['count'] for p in price_bands])
+    type_names = {'flagship':'品牌旗舰店','tmall_auth':'天猫授权店','tmall':'天猫店','special_channel':'百亿补贴/精选','c_store':'淘宝C店','enterprise':'企业店'}
 
+    # 评分颜色
     color = "#22c55e" if s["total"]>=80 else "#3b82f6" if s["total"]>=70 else "#f59e0b" if s["total"]>=50 else "#ef4444"
 
-    # 产品表格行
-    pr_rows = ''
-    for i, p in enumerate(products, 1):
-        pr_rows += '<tr><td>%d</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>' % (
-            i, p.get('title','')[:40], p.get('price',''), p.get('salesRaw',''), p.get('shop','')[:12], p.get('brand','')[:10])
+    # ---- Markdown → HTML 转换 (深度分析) ----
+    def md2html(text):
+        """将深度分析 Markdown 转为格式化 HTML"""
+        text = text.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
+        lines = text.split('\n')
+        out = []
+        in_list = False
+        for line in lines:
+            # H3: ### N. Title
+            m = _re.match(r'^###\s+(.+)', line)
+            if m:
+                if in_list: out.append('</ul>'); in_list = False
+                out.append(f'<h3 class="a-h3">{m.group(1)}</h3>')
+                continue
+            # Bold text
+            line = _re.sub(r'\*\*(.+?)\*\*', r'<strong class="a-bold">\1</strong>', line)
+            # Inline code
+            line = _re.sub(r'`([^`]+)`', r'<code class="a-code">\1</code>', line)
+            # List items
+            if _re.match(r'^[-•]\s', line):
+                if not in_list: out.append('<ul class="a-list">'); in_list = True
+                content = _re.sub(r'^[-•]\s+', '', line)
+                # Highlight ✅/❌/⚡
+                content = _re.sub(r'(✅[^<]+)', r'<span class="a-good">\1</span>', content)
+                content = _re.sub(r'(❌[^<]+)', r'<span class="a-bad">\1</span>', content)
+                content = _re.sub(r'(⚡[^<]+)', r'<span class="a-tip">\1</span>', content)
+                out.append(f'<li>{content}</li>')
+                continue
+            else:
+                if in_list: out.append('</ul>'); in_list = False
+            # Empty line → paragraph break
+            if not line.strip():
+                out.append('')
+                continue
+            # Regular paragraph
+            out.append(f'<p>{line}</p>')
+        if in_list: out.append('</ul>')
+        return '\n'.join(out)
 
-    # 品牌表格行
-    br_rows = ''
-    for i, b in enumerate(brands, 1):
-        br_rows += '<tr><td>%d</td><td>%s</td><td>%d</td><td>%s</td></tr>' % (
-            i, b.get('brand','')[:15], b.get('count',0), b.get('share',''))
+    analysis_html = md2html(analysis)
 
-    # 1688数据
-    d8_section = ''
+    # ---- 选品建议面板 (原Tab 0) ----
+    t_advice = '<div class="advice-grid">'
+    sections = [
+        ('✅ 优势', 'advice-good', generate_advantages(norm)),
+        ('⚠️ 劣势', 'advice-warn', generate_disadvantages(norm)),
+        ('🎯 机会', 'advice-opp', generate_opportunities(norm)),
+        ('🚨 威胁', 'advice-threat', generate_threats(norm)),
+    ]
+    for title, cls, content in sections:
+        t_advice += f'<div class="advice-card {cls}"><h4>{title}</h4><div class="advice-body">{content}</div></div>'
+    t_advice += '</div>'
+    # 进入策略 + 适合/不适合
+    t_advice += f'<div class="strategy-box"><h4>📋 进入策略</h4><p>{entry_strategy(norm)}</p></div>'
+    t_advice += f'<div class="advice-grid"><div class="advice-card advice-good"><h4>✅ 适合卖家</h4><p>{suitable_seller(norm)}</p></div><div class="advice-card advice-bad"><h4>❌ 不适合卖家</h4><p>{unsuitable_seller(norm)}</p></div></div>'
+
+    # ---- 生成各表格HTML ----
+    # 1. 市场规模表
+    t_market = '<table><tr><th>指标</th><th>数值</th></tr>'
+    t_market += f'<tr><td>预估总销量</td><td>{m["total_sales"]:,} 件</td></tr>'
+    t_market += f'<tr><td>预估总销额</td><td>¥{norm.get("total_revenue_est",0)/10000:,.0f}万</td></tr>' if norm.get('total_revenue_est',0)>0 else ''
+    t_market += f'<tr><td>分析产品数</td><td>{norm["analyzed_count"]}</td></tr>'
+    t_market += f'<tr><td>均价</td><td>{m["avg_price"]}</td></tr>'
+    t_market += f'<tr><td>中位数价格</td><td>{m["median_price"]}</td></tr>'
+    t_market += f'<tr><td>价格区间</td><td>{p["price_range"]}</td></tr></table>'
+
+    # 2. 增长潜力表
+    t_growth = '<table><tr><th>指标</th><th>数值</th></tr>'
+    t_growth += f'<tr><td>新品销量占比</td><td>{g["newness_ratio"]}</td></tr>'
+    t_growth += f'<tr><td>近6月上架</td><td>{g["listing_6m"]}个</td></tr>'
+    t_growth += f'<tr><td>首单价产品</td><td>{g["first_price"]}个</td></tr>'
+    t_growth += f'<tr><td>标题含新品词</td><td>{g["new_title"]}个</td></tr>'
+    t_growth += f'<tr><td>热销爆款</td><td>{g["hot_bomb"]}个</td></tr>'
+    t_growth += f'<tr><td>在榜产品</td><td>{g["hot_list"]}个</td></tr>'
+    t_growth += f'<tr><td>数据层级</td><td>{dq["growth_tier"]}</td></tr>'
+    t_growth += f'<tr><td>增长数据源</td><td>{dq["growth_source"]}</td></tr></table>'
+
+    # 3. 竞争格局表
+    t_comp = '<table><tr><th>指标</th><th>数值</th></tr>'
+    t_comp += f'<tr><td>店铺CR3</td><td>{c["cr3_store"]}</td></tr>'
+    t_comp += f'<tr><td>品牌CR3</td><td>{c["cr3_brand"]}</td></tr>'
+    t_comp += f'<tr><td>HHI指数</td><td>{c["hhi"]}</td></tr>'
+    t_comp += f'<tr><td>平均同类商品数</td><td>{c["avg_same_count"]}</td></tr>'
+    t_comp += f'<tr><td>直通车广告占比</td><td>{m["ad_ratio"]}</td></tr>'
+    t_comp += f'<tr><td>百亿补贴</td><td>{b["subsidy_index"]}</td></tr></table>'
+
+    # 4. 进入壁垒表
+    t_barrier = '<table><tr><th>指标</th><th>数值</th></tr>'
+    t_barrier += f'<tr><td>壁垒类型</td><td>{b["barrier_type"]}</td></tr>'
+    t_barrier += f'<tr><td>天猫占比</td><td>{m["tmall_ratio"]}</td></tr>'
+    t_barrier += f'<tr><td>旗舰店占比</td><td>{m.get("flagship_ratio","")}</td></tr>'
+    t_barrier += f'<tr><td>新品活跃度</td><td>{b["newness_level"]}</td></tr>'
+    t_barrier += f'<tr><td>上市时间覆盖</td><td>{dq["listing_coverage"]}</td></tr>'
+    t_barrier += f'<tr><td>品牌数据覆盖</td><td>{dq.get("brandCoverage","")}</td></tr></table>'
+
+    # 5. 利润空间表
+    t_profit = '<table><tr><th>指标</th><th>数值</th></tr>'
+    t_profit += f'<tr><td>均价</td><td>{p["avg_price"]}</td></tr>'
+    t_profit += f'<tr><td>中位数价格</td><td>{p["median_price"]}</td></tr>'
+    t_profit += f'<tr><td>价格区间</td><td>{p["price_range"]}</td></tr></table>'
+
+    # 6. 价格带分布表
+    t_pb = '<table><tr><th>价格带</th><th>产品数</th><th>占比</th><th>销量</th></tr>'
+    total_p = norm['analyzed_count']
+    for pb in price_bands:
+        pct = f'{pb["count"]/total_p*100:.1f}%' if total_p>0 else '0%'
+        t_pb += f'<tr><td>{pb["label"]}</td><td>{pb["count"]}</td><td>{pct}</td><td>{pb["sales"]:,}</td></tr>'
+    t_pb += '</table>'
+
+    # 7. 品牌分析表
+    t_brands = '<table><tr><th>#</th><th>品牌</th><th>产品数</th><th>份额</th></tr>'
+    for i, br in enumerate(brands[:15], 1):
+        t_brands += f'<tr><td>{i}</td><td>{br.get("brand","")[:20]}</td><td>{br.get("count",0)}</td><td>{br.get("share","")}</td></tr>'
+    t_brands += '</table>'
+
+    # 8. 店铺分析表
+    t_shops = '<table><tr><th>#</th><th>店铺</th><th>预估销量</th><th>份额</th></tr>'
+    for i, sh in enumerate(shops[:15], 1):
+        t_shops += f'<tr><td>{i}</td><td>{sh.get("shop","")[:20]}</td><td>{sh.get("sales",0):,}</td><td>{sh.get("share","")}</td></tr>'
+    t_shops += '</table>'
+
+    # 店铺类型分布
+    if stypes:
+        total_st = sum(stypes.values())
+        t_shops += '<h4 style="margin-top:16px">店铺类型分布</h4><table><tr><th>类型</th><th>数量</th><th>占比</th></tr>'
+        for t, cnt in sorted(stypes.items(), key=lambda x: x[1], reverse=True):
+            t_shops += f'<tr><td>{type_names.get(t,t)}</td><td>{cnt}</td><td>{cnt/total_st*100:.0f}%</td></tr>'
+        t_shops += '</table>'
+
+    # 9. 产品清单表 (Top 20)
+    t_products = '<table><tr><th>#</th><th>产品</th><th>价格</th><th>销量</th><th>店铺</th><th>品牌</th><th>标签</th></tr>'
+    for i, pr in enumerate(products[:20], 1):
+        title = pr.get('title','')[:35]
+        price = pr.get('price','')
+        sales = pr.get('sales','')
+        shop = pr.get('shop','')[:12]
+        brand = (pr.get('brand','?'))[:8]
+        tags = []
+        if pr.get('isRecent6m') or pr.get('hasNewTitle') or pr.get('isFirstPrice'): tags.append('新品')
+        if pr.get('hasHotBomb') or pr.get('hasHotList'): tags.append('热销')
+        tag_str = ' '.join(tags)
+        t_products += f'<tr><td>{i}</td><td>{title}</td><td>{price}</td><td>{sales}</td><td>{shop}</td><td>{brand}</td><td>{tag_str}</td></tr>'
+    t_products += '</table>'
+
+    # 10. 1688供应链表
+    t_1688_products = ''
     if d1688 and d1688.get('prices'):
-        ps = d1688['prices']; mid = sorted(ps)[len(ps)//2]
+        ps = d1688['prices']; mid_p = sorted(ps)[len(ps)//2]
         try:
             avg_t = float(str(m['avg_price']).replace('¥','').replace(',',''))
-            markup = avg_t/mid if mid else 0; gm = (avg_t-mid)/avg_t*100
-        except: avg_t=0;markup=0;gm=0
-        d8_section = '''<table style="max-width:600px">
-        <tr><td>批发价区间</td><td>¥%.0f ~ ¥%.0f</td></tr>
-        <tr><td>中位批发价</td><td>¥%.0f</td></tr>
-        <tr><td>零售均价</td><td>%s</td></tr>
-        <tr><td>零售/批发比</td><td>%.1fx</td></tr>
-        <tr><td>预估毛利率</td><td>%.0f%%</td></tr>
-        </table><p style="margin-top:12px">起订量500-1000支 | 广州白云/义乌产业带</p>''' % (
-            min(ps), max(ps), mid, m['avg_price'], markup, gm)
+            markup = avg_t/mid_p if mid_p else 0; gm = (avg_t-mid_p)/avg_t*100
+            pf = avg_t*0.05; net = avg_t-mid_p-pf-4.5; nm = net/avg_t*100
+        except: avg_t=0;markup=0;gm=0;pf=0;net=0;nm=0
+        t_1688 = '<table>'
+        t_1688 += f'<tr><td><b>批发价区间</b></td><td>Y{min(ps):.0f} ~ Y{max(ps):.0f}</td></tr>'
+        t_1688 += f'<tr><td><b>中位批发价</b></td><td>Y{mid_p:.0f}</td></tr>'
+        t_1688 += f'<tr><td><b>淘宝零售均价</b></td><td>{m["avg_price"]}</td></tr>'
+        t_1688 += f'<tr><td><b>零售/批发比</b></td><td>{markup:.1f}x</td></tr>'
+        t_1688 += f'<tr><td><b>预估毛利率</b></td><td>{gm:.0f}%</td></tr>'
+        t_1688 += f'<tr><td><b>预估净利/单</b></td><td>Y{net:.1f} ({nm:.0f}%)</td></tr>'
+        t_1688 += '</table>'
+        t_1688 += f'<h4 style="margin-top:16px">成本拆解 (中位批发Y{mid_p:.0f})</h4><table>'
+        t_1688 += f'<tr><td>采购成本</td><td>Y{mid_p:.0f}</td></tr>'
+        t_1688 += f'<tr><td>包装/辅料</td><td>Y{mid_p*0.05:.0f}-{mid_p*0.12:.0f}</td></tr>'
+        t_1688 += f'<tr><td>平台佣金(~5%)</td><td>Y{pf:.1f}</td></tr></table>'
+        t_1688 += f'<p style="margin-top:8px">采集自{d1688.get("pages_scraped","?")}页/{d1688.get("total_products_scraped",len(ps))}条产品 | {d1688.get("source","1688.com")}</p>'
+        # 1688产品列表
+        plist = d1688.get('products', [])
+        if plist:
+            t_1688_products = '<h4 style="margin-top:20px">1688产品列表 (Top 20)</h4><table><tr><th>#</th><th>产品</th><th>批发价</th><th>供应商</th><th>销量</th></tr>'
+            for i, pr in enumerate(plist[:20], 1):
+                t_1688_products += f'<tr><td>{i}</td><td>{pr.get("title","")[:50]}</td><td>Y{pr.get("price",0)}</td><td>{pr.get("shop","")[:15]}</td><td>{pr.get("sales","")}</td></tr>'
+            t_1688_products += '</table>'
     else:
-        d8_section = '<p>暂无1688数据。运行 python scripts/collect_1688.py 采集。</p>'
+        t_1688 = '<p>暂无1688数据。运行 <code>python scripts/collect_1688.py &lt;关键词&gt;</code> 采集。</p>'
 
-    # HTML 主体
+    # 11. 策略建议表
+    t_strategy = '<table><tr><th>类别</th><th>分析</th></tr>'
+    t_strategy += f'<tr><td><b>优势</b></td><td>{generate_advantages(norm)}</td></tr>'
+    t_strategy += f'<tr><td><b>劣势</b></td><td>{generate_disadvantages(norm)}</td></tr>'
+    t_strategy += f'<tr><td><b>机会</b></td><td>{generate_opportunities(norm)}</td></tr>'
+    t_strategy += f'<tr><td><b>威胁</b></td><td>{generate_threats(norm)}</td></tr>'
+    t_strategy += f'<tr><td><b>进入策略</b></td><td>{entry_strategy(norm)}</td></tr>'
+    t_strategy += f'<tr><td><b>适合卖家</b></td><td>{suitable_seller(norm)}</td></tr>'
+    t_strategy += f'<tr><td><b>不适合卖家</b></td><td>{unsuitable_seller(norm)}</td></tr></table>'
+
+    # 12. 数据质量表
+    t_quality = '<table><tr><th>指标</th><th>数值</th></tr>'
+    t_quality += f'<tr><td>上市时间覆盖率</td><td>{dq["listing_coverage"]}</td></tr>'
+    t_quality += f'<tr><td>增长数据层级</td><td>{dq["growth_tier"]}</td></tr>'
+    t_quality += f'<tr><td>增长数据源</td><td>{dq["growth_source"]}</td></tr>'
+    t_quality += f'<tr><td>品牌数据覆盖率</td><td>{dq.get("brandCoverage","")}</td></tr>'
+    t_quality += f'<tr><td>模型版本</td><td>{norm["model_version"]}</td></tr>'
+    t_quality += f'<tr><td>生成时间</td><td>{datetime.now().isoformat()}</td></tr></table>'
+
+    # 发货地表
+    if locs:
+        t_loc = '<h3 style="margin-top:16px">发货地分布</h3><table><tr><th>发货地</th><th>产品数</th><th>占比</th></tr>'
+        for loc in locs[:5]:
+            t_loc += f'<tr><td>{loc["location"]}</td><td>{loc["count"]}</td><td>{loc["count"]/norm["analyzed_count"]*100:.0f}%</td></tr>'
+        t_loc += '</table>'
+    else:
+        t_loc = ''
+
+    # 动态指标
+    dyn = norm.get('dynamism', {})
+    if dyn:
+        t_dyn = '<h3 style="margin-top:16px">动态指标</h3><table><tr><th>指标</th><th>数值</th></tr>'
+        t_dyn += f'<tr><td>DI动态指数</td><td>{dyn.get("index",0):.3f}</td></tr>'
+        t_dyn += f'<tr><td>标签</td><td>{dyn.get("label","")}</td></tr>'
+        t_dyn += f'<tr><td>Jaccard相似度</td><td>{dyn.get("jaccard",0):.3f}</td></tr>'
+        t_dyn += f'<tr><td>价格离散度</td><td>{dyn.get("priceDispersion",0):.3f}</td></tr></table>'
+    else:
+        t_dyn = ''
+
+    # 深度分析 (转义HTML)
+    analysis_safe = analysis.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
+
+    # ---- 组装HTML ----
     html = '''<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">
-<title>%s - 完整分析仪表板</title>
+<title>%s - 淘宝品类选品分析</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,sans-serif;background:#f5f7fa;padding:16px}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f5f7fa;color:#333;padding:16px}
 .container{max-width:1200px;margin:0 auto}
-h1{text-align:center;font-size:20px;margin-bottom:8px}
-.score{text-align:center;font-size:40px;font-weight:bold;color:%s}
-.tabs{display:flex;gap:4px;margin:12px 0;flex-wrap:wrap}
-.tab{padding:8px 16px;border:none;background:#e2e8f0;border-radius:8px 8px 0 0;cursor:pointer;font-size:13px}
-.tab.active{background:#fff;color:#4472C4;font-weight:700}
-.panel{display:none;background:#fff;border-radius:0 12px 12px 12px;padding:20px}
+h1{text-align:center;font-size:22px;margin-bottom:2px}
+.subtitle{text-align:center;color:#888;margin-bottom:14px;font-size:13px}
+.score-big{text-align:center;margin:8px 0;font-size:42px;font-weight:bold;color:%s}
+.rating-badge{display:inline-block;padding:3px 14px;border-radius:20px;font-weight:bold;font-size:16px;background:%s}
+/* Charts */
+.dashboard{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:16px 0}
+.card{background:#fff;border-radius:10px;padding:16px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.card h3{font-size:14px;color:#555;margin-bottom:10px}
+.card.full{grid-column:1/-1}
+/* Tabs */
+.tabs{display:flex;gap:2px;margin:16px 0 0;flex-wrap:wrap;position:sticky;top:0;z-index:10;background:#f5f7fa;padding:6px 0}
+.tab{padding:7px 12px;border:none;background:#e8ecf1;border-radius:7px 7px 0 0;cursor:pointer;font-size:12px;white-space:nowrap;color:#666;transition:all .15s}
+.tab:hover{background:#dde3ea;color:#333}
+.tab.active{background:#fff;color:#4472C4;font-weight:700;box-shadow:0 -2px 4px rgba(0,0,0,.06)}
+.tab .ico{font-size:14px;margin-right:3px;vertical-align:-1px}
+.panel{display:none;background:#fff;border-radius:0 10px 10px 10px;padding:18px;box-shadow:0 1px 3px rgba(0,0,0,.08);margin-bottom:16px}
 .panel.active{display:block}
-table{width:100%%;border-collapse:collapse;font-size:13px;margin-top:12px}
-th{background:#4472C4;color:#fff;padding:6px 10px;text-align:left}
-td{padding:6px 10px;border-bottom:1px solid #eee}
-.analysis{line-height:1.8;white-space:pre-wrap}
+/* Tables */
+table{width:100%%;border-collapse:collapse;font-size:13px}
+th{background:#4472C4;color:#fff;padding:7px 10px;text-align:left;font-weight:600;font-size:12px}
+td{padding:7px 10px;border-bottom:1px solid #eee}
+tr:hover td{background:#f0f4ff}
+/* 选品建议 */
+.advice-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px}
+.advice-card{border-radius:8px;padding:14px;border-left:4px solid #ccc}
+.advice-card h4{font-size:14px;margin-bottom:8px}
+.advice-card.advice-good{background:#f0fdf4;border-left-color:#22c55e}
+.advice-card.advice-warn{background:#fefce8;border-left-color:#f59e0b}
+.advice-card.advice-opp{background:#eff6ff;border-left-color:#3b82f6}
+.advice-card.advice-threat{background:#fef2f2;border-left-color:#ef4444}
+.advice-card.advice-bad{background:#fef2f2;border-left-color:#ef4444}
+.advice-body{font-size:13px;line-height:1.7;color:#555}
+.strategy-box{background:#f5f3ff;border-radius:8px;padding:14px;margin-bottom:16px;border-left:4px solid #8b5cf6}
+.strategy-box h4{font-size:14px;margin-bottom:6px;color:#6d28d9}
+.strategy-box p{font-size:13px;line-height:1.7;color:#555}
+/* 深度分析 */
+.analysis{line-height:1.9;font-size:14px;max-width:900px}
+.analysis .a-h3{color:#1e40af;font-size:17px;font-weight:700;margin:28px 0 10px;padding-bottom:6px;border-bottom:2px solid #e2e8f0}
+.analysis .a-bold{color:#1a202c;font-weight:700}
+.analysis .a-code{background:#f1f5f9;color:#e11d48;padding:1px 6px;border-radius:3px;font-size:13px;font-family:'SF Mono','Consolas',monospace}
+.analysis .a-list{margin:6px 0 12px;padding-left:22px}
+.analysis .a-list li{margin:5px 0;color:#444}
+.analysis .a-good{background:#dcfce7;color:#166534;padding:0 4px;border-radius:2px}
+.analysis .a-bad{background:#fee2e2;color:#991b1b;padding:0 4px;border-radius:2px}
+.analysis .a-tip{background:#dbeafe;color:#1e40af;padding:0 4px;border-radius:2px}
+.analysis p{margin:8px 0;color:#444}
 </style></head><body>
 <div class="container">
-<h1>🔍 %s — 淘宝品类选品分析</h1>
-<div class="score">%d<span style="font-size:16px;color:#999">/100</span></div>
+<h1>\U0001f50d %s — 淘宝品类选品分析</h1>
+<p class="subtitle">模型: %s | 分析产品: %d | %s | 数据源: 淘宝/天猫</p>
+
+<div style="text-align:center">
+<span class="rating-badge">%s</span>
+<div class="score-big">%d<span style="font-size:18px;color:#999">/100</span></div>
+<p style="font-size:14px;color:#666;margin-top:2px">%s</p>
+</div>
+
+<div class="dashboard">
+<div class="card"><h3>\U0001f4ca 五维评分雷达图</h3><canvas id="rc" height="240"></canvas></div>
+<div class="card"><h3>\U0001f4ca 价格带分布</h3><canvas id="pc" height="220"></canvas></div>
+<div class="card"><h3>\U0001f4ca Top 10 店铺销量</h3><canvas id="sc" height="220"></canvas></div>
+<div class="card"><h3>\U0001f4cb 市场概况</h3>%s</div>
+<div class="card full"><h3>\U0001f4cb 评分明细</h3>%s</div>
+</div>
+
 <div class="tabs">
-<button class="tab active" onclick="sw(0)">评分总览</button>
-<button class="tab" onclick="sw(1)">价格带</button>
-<button class="tab" onclick="sw(2)">品牌/店铺</button>
-<button class="tab" onclick="sw(3)">产品清单</button>
-<button class="tab" onclick="sw(4)">1688供应链</button>
-<button class="tab" onclick="sw(5)">深度分析</button>
+<button class="tab active" onclick="sw(0,'tab','panel')"><span class="ico">&#x1f4cb;</span>选品建议</button>
+<button class="tab" onclick="sw(1,'tab','panel')"><span class="ico">&#x1f4ca;</span>市场规模</button>
+<button class="tab" onclick="sw(2,'tab','panel')"><span class="ico">&#x1f331;</span>增长潜力</button>
+<button class="tab" onclick="sw(3,'tab','panel')"><span class="ico">&#x2694;</span>竞争格局</button>
+<button class="tab" onclick="sw(4,'tab','panel')"><span class="ico">&#x1f6e1;</span>进入壁垒</button>
+<button class="tab" onclick="sw(5,'tab','panel')"><span class="ico">&#x1f4b0;</span>利润空间</button>
+<button class="tab" onclick="sw(6,'tab','panel')"><span class="ico">&#x1f4c8;</span>价格带</button>
+<button class="tab" onclick="sw(7,'tab','panel')"><span class="ico">&#x1f3f7;</span>品牌</button>
+<button class="tab" onclick="sw(8,'tab','panel')"><span class="ico">&#x1f3ea;</span>店铺</button>
+<button class="tab" onclick="sw(9,'tab','panel')"><span class="ico">&#x1f4e6;</span>产品清单</button>
+<button class="tab" onclick="sw(10,'tab','panel')"><span class="ico">&#x1f3ed;</span>1688</button>
+<button class="tab" onclick="sw(11,'tab','panel')"><span class="ico">&#x1f50d;</span>数据质量</button>
+<button class="tab" onclick="sw(12,'tab','panel')"><span class="ico">&#x1f4dd;</span>深度分析</button>
 </div>
-<div class="panel active" id="p0"><canvas id="rc" height="200"></canvas></div>
-<div class="panel" id="p1"><canvas id="pc" height="200"></canvas></div>
-<div class="panel" id="p2"><h3>品牌</h3><table><tr><th>排名</th><th>品牌</th><th>产品数</th><th>份额</th></tr>%s</table></div>
-<div class="panel" id="p3"><table><tr><th>#</th><th>产品</th><th>价格</th><th>销量</th><th>店铺</th><th>品牌</th></tr>%s</table></div>
-<div class="panel" id="p4"><h3>1688采购成本</h3>%s</div>
-<div class="panel" id="p5"><div class="analysis">%s</div></div>
+
+<!-- Panel 0: 选品建议 -->
+<div class="panel active" id="panel0"><h3>\U0001f4cb 选品建议</h3>%s</div>
+<!-- Panel 1-12: 数据表格 -->
+<div class="panel" id="panel1"><h3>\U0001f4ca 市场规模</h3>%s</div>
+<div class="panel" id="panel2"><h3>\U0001f331 增长潜力</h3>%s</div>
+<div class="panel" id="panel3"><h3>⚔️ 竞争格局</h3>%s</div>
+<div class="panel" id="panel4"><h3>\U0001f6e1 进入壁垒</h3>%s</div>
+<div class="panel" id="panel5"><h3>\U0001f4b0 利润空间</h3>%s</div>
+<div class="panel" id="panel6"><h3>\U0001f4c8 价格带分布</h3>%s</div>
+<div class="panel" id="panel7"><h3>\U0001f3f7 品牌分析</h3>%s</div>
+<div class="panel" id="panel8"><h3>\U0001f3ea 店铺分析</h3>%s%s</div>
+<div class="panel" id="panel9"><h3>\U0001f4e6 产品清单 (Top 20)</h3>%s</div>
+<div class="panel" id="panel10"><h3>\U0001f3ed 1688供应链</h3>%s%s%s</div>
+<div class="panel" id="panel11"><h3>\U0001f50d 数据质量</h3>%s</div>
+<div class="panel" id="panel12"><div class="analysis">%s</div></div>
 </div>
+
 <script>
-function sw(n){document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',i===n));
-document.querySelectorAll('.panel').forEach((p,i)=>p.classList.toggle('active',i===n));}
-new Chart(document.getElementById('rc'),{type:'radar',data:{labels:%s,datasets:[{label:'Score',data:%s,borderColor:'#4472C4',backgroundColor:'rgba(68,114,196,0.2)'}]}});
-new Chart(document.getElementById('pc'),{type:'bar',data:{labels:%s,datasets:[{label:'Count',data:%s,backgroundColor:'#4472C4'}]}});
+function sw(n,tabCls,panelCls){
+document.querySelectorAll('.'+tabCls).forEach(function(t,i){t.classList.toggle('active',i===n)});
+document.querySelectorAll('.'+panelCls).forEach(function(p,i){p.classList.toggle('active',i===n)});
+}
+// 雷达图
+new Chart(document.getElementById('rc'),{type:'radar',data:{labels:%s,datasets:[{label:'得分',data:%s,borderColor:'#4472C4',backgroundColor:'rgba(68,114,196,0.2)'}]},options:{scales:{r:{suggestedMin:0,suggestedMax:%d}}}});
+// 价格带柱状图
+new Chart(document.getElementById('pc'),{type:'bar',data:{labels:%s,datasets:[{label:'产品数',data:%s,backgroundColor:'#4472C4'}]}});
+// 店铺柱状图
+new Chart(document.getElementById('sc'),{type:'bar',data:{labels:%s,datasets:[{label:'预估销量',data:%s,backgroundColor:'#5B9BD5'}]},options:{indexAxis:'y'}});
 </script></body></html>''' % (
-        norm['query'], color, norm['query'], s['total'],
-        br_rows, pr_rows, d8_section, analysis.replace('<','&lt;').replace('>','&gt;'),
-        dim_names, dim_scores, pb_labels, pb_counts)
+        norm['query'], color,
+        '"#C6EFCE"' if s["total"]>=80 else '"#BDD7EE"' if s["total"]>=70 else '"#FFEB9C"' if s["total"]>=50 else '"#FFC7CE"',
+        norm['query'], norm['model_version'], norm['analyzed_count'], datetime.now().strftime('%Y-%m-%d %H:%M'),
+        s['rating'], s['total'], s['recommendation'],
+        t_market,  # 仪表板中的市场概况
+        # 评分明细表
+        '<table><tr><th>维度</th><th>得分</th><th>满分</th><th>分析</th></tr>'+''.join(['<tr><td>%s</td><td><strong>%d</strong></td><td>%d</td><td>%s</td></tr>' % (dim_names[i], dims[k]['score'], dims[k]['max'], dims[k]['label']) for i,k in enumerate(dim_keys)])+'</table>',
+        t_advice,  # 选品建议面板
+        # 各标签页表格
+        t_market, t_growth, t_comp, t_barrier, t_profit,
+        t_pb, t_brands, t_shops, t_loc,
+        t_products, t_1688, t_1688_products, t_dyn,
+        t_quality,
+        analysis_html,  # 格式化后的深度分析
+        json.dumps(dim_names, ensure_ascii=False), json.dumps(dim_scores),
+        max(dim_maxs),
+        json.dumps([p['label'] for p in price_bands], ensure_ascii=False), json.dumps([p['count'] for p in price_bands]),
+        json.dumps([s['shop'][:10] for s in shops], ensure_ascii=False), json.dumps([s['sales'] for s in shops])
+    )
 
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write(html)
-    return output_path
     return output_path
 
 
@@ -1508,15 +1686,10 @@ def main():
     generate_excel(norm, xlsx_path)
     print(f'[OK] excel: {xlsx_path}')
 
-    # Generate HTML
+    # Generate HTML (统一仪表板: 图表 + 标签页数据 + 深度分析)
     html_path = os.path.join(output_dir, 'dashboard.html')
     generate_html(norm, html_path)
     print(f'[OK] html: {html_path}')
-
-    # Generate enhanced HTML with tabs
-    html_full_path = os.path.join(output_dir, 'dashboard_full.html')
-    generate_html_full(norm, html_full_path)
-    print(f'[OK] html_full: {html_full_path}')
 
     # Generate LLM data brief
     brief = generate_data_brief(norm)
