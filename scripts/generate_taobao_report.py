@@ -782,8 +782,13 @@ def generate_data_brief(norm: dict) -> str:
 6. **威胁与风险** — 外部竞争和平台政策等风险
 7. **进入策略建议** — 具体的定价建议、差异化方向、运营重点
 8. **适合/不适合的卖家画像** — 什么样的人应该做/不应该做这个品类
+9. **优化标题模板** — 基于Top产品的标题关键词+搜索习惯，生成3个SEO优化的产品标题模板：
+   - 标题1：侧重品牌+材质+核心功能 (适合旗舰店/品牌店)
+   - 标题2：侧重场景+人群+差异化卖点 (适合内容种草)
+   - 标题3：侧重长尾关键词+搜索覆盖 (最大化搜索曝光)
+   - 每个标题控制在25-40字，标注核心关键词和适用场景
 
-要求：每个结论都要引用具体数据支撑，不要泛泛而谈。竞品分析必须逐个拆解Top 5产品的标题卖点和定位策略。报告直接输出Markdown格式。'''
+要求：每个结论都要引用具体数据支撑，不要泛泛而谈。竞品分析必须逐个拆解Top 5产品的标题卖点和定位策略。标题模板要基于1688供应链成本和淘宝价格定位给出具体的价格建议。报告直接输出Markdown格式。'''
     return brief
 
 
@@ -1563,16 +1568,19 @@ def generate_html(norm: dict, output_path: str):
     <tr><td>快递费/单</td><td><input id="c_ship" type="number" value="{profit_ship:.1f}" step="0.1" oninput="redo()"></td></tr>
     <tr><td>包装费/单</td><td><input id="c_pack" type="number" value="{profit_pack:.1f}" step="0.1" oninput="redo()"></td></tr>
     <tr><td>推广费/单</td><td><input id="c_ad" type="number" value="0" step="0.1" oninput="redo()"></td></tr>
-    <tr><td>其他成本/单</td><td><input id="c_other" type="number" value="0" step="0.1" oninput="redo()"></td></tr>
-    <tr><td>月固定成本</td><td><input id="c_fixed" type="number" value="0" step="100" oninput="redo()"></td></tr></table></div>
+    <tr><td>其他成本/单</td><td><input id="c_other" type="number" value="0" step="0.1" oninput="redo()"></td></tr></table>
+    <p style="font-size:11px;color:#94a3b8;margin-top:6px">以下默认0, 根据实际情况填写</p>
+    <table><tr><td>退货率(%)</td><td><input id="c_return" type="number" value="0" step="0.5" oninput="redo()" style="width:60px"> %</td></tr>
+    <tr><td>手续费(%)</td><td><input id="c_fee" type="number" value="0" step="0.1" oninput="redo()" style="width:60px"> %</td></tr>
+    <tr><td>运险费/单</td><td><input id="c_insure" type="number" value="0" step="0.1" oninput="redo()"></td></tr></table></div>
     <div class="calc-card calc-result"><h4>利润结果</h4>
     <table><tr><td>平台佣金(5%)</td><td id="r_comm">0</td></tr>
+    <tr><td>退货损耗</td><td id="r_return_loss">0</td></tr>
     <tr><td>单件毛利</td><td id="r_gross">0</td></tr>
     <tr><td><b>单件净利</b></td><td><b id="r_net">0</b></td></tr>
     <tr><td>毛利率</td><td id="r_margin">0%</td></tr>
-    <tr><td>净利率</td><td id="r_net_margin">0%</td></tr>
-    <tr><td>月盈亏平衡(件)</td><td id="r_breakeven">0</td></tr></table></div></div>
-    <p style="margin-top:12px;color:#888;font-size:12px">默认值来自1688中位批发价和淘宝零售均价，可手动修改。月盈亏平衡=月固定成本/单件净利。</p>
+    <tr><td>净利率</td><td id="r_net_margin">0%</td></tr></table></div></div>
+    <p style="margin-top:12px;color:#888;font-size:12px">默认值来自1688中位批发价和淘宝零售均价。退货损耗=售价×退货率。手续费=(售价+快递)×手续费率。运险费按单扣除。</p>
     <script>
     function redo(){{
         var s=parseFloat(document.getElementById('c_sell').value)||0;
@@ -1581,7 +1589,21 @@ def generate_html(norm: dict, output_path: str):
         var p=parseFloat(document.getElementById('c_pack').value)||0;
         var a=parseFloat(document.getElementById('c_ad').value)||0;
         var o=parseFloat(document.getElementById('c_other').value)||0;
-        var f=parseFloat(document.getElementById('c_fixed').value)||0;
+        var rt=parseFloat(document.getElementById('c_return').value)||0;
+        var fe=parseFloat(document.getElementById('c_fee').value)||0;
+        var ins=parseFloat(document.getElementById('c_insure').value)||0;
+        var comm=s*0.05;
+        var returnLoss=s*rt/100;
+        var feeCost=(s+h)*fe/100;
+        var gross=s-c;
+        var net=s-c-h-p-comm-a-o-returnLoss-feeCost-ins;
+        document.getElementById('r_comm').textContent=comm.toFixed(1);
+        document.getElementById('r_return_loss').textContent=returnLoss.toFixed(1);
+        document.getElementById('r_gross').textContent=gross.toFixed(1);
+        document.getElementById('r_net').textContent=net.toFixed(1);
+        document.getElementById('r_margin').textContent=s>0?(gross/s*100).toFixed(0)+'%':'0%';
+        document.getElementById('r_net_margin').textContent=s>0?(net/s*100).toFixed(0)+'%':'0%';
+    }}
         var comm=s*0.05;
         var gross=s-c;
         var net=s-c-h-p-comm-a-o;
@@ -1590,7 +1612,6 @@ def generate_html(norm: dict, output_path: str):
         document.getElementById('r_net').textContent=net.toFixed(1);
         document.getElementById('r_margin').textContent=s>0?(gross/s*100).toFixed(0)+'%':'0%';
         document.getElementById('r_net_margin').textContent=s>0?(net/s*100).toFixed(0)+'%':'0%';
-        document.getElementById('r_breakeven').textContent=net>0?Math.ceil(f/net):'-';
     }}
     redo();
     </script>'''
@@ -1690,8 +1711,7 @@ tr:hover td{background:#f0f4ff}
 <button class="tab" onclick="sw(9,'tab','panel')"><span class="ico">&#x1f4e6;</span>产品清单</button>
 <button class="tab" onclick="sw(10,'tab','panel')"><span class="ico">&#x1f3ed;</span>1688</button>
 <button class="tab" onclick="sw(11,'tab','panel')"><span class="ico">&#x1f4b2;</span>利润计算</button>
-<button class="tab" onclick="sw(12,'tab','panel')"><span class="ico">&#x1f50d;</span>数据质量</button>
-<button class="tab" onclick="sw(13,'tab','panel')"><span class="ico">&#x1f4dd;</span>深度分析</button>
+<button class="tab" onclick="sw(12,'tab','panel')"><span class="ico">&#x1f4dd;</span>深度分析</button>
 </div>
 
 <!-- Panel 0: 选品建议 -->
@@ -1708,8 +1728,7 @@ tr:hover td{background:#f0f4ff}
 <div class="panel" id="panel9"><h3>\U0001f4e6 产品清单 (Top 20)</h3>%s</div>
 <div class="panel" id="panel10"><h3>\U0001f3ed 1688供应链</h3>%s%s%s</div>
 <div class="panel" id="panel11"><h3>\U0001f4b2 利润计算器</h3>%s</div>
-<div class="panel" id="panel12"><h3>\U0001f50d 数据质量</h3>%s</div>
-<div class="panel" id="panel13"><div class="analysis">%s</div></div>
+<div class="panel" id="panel12"><div class="analysis">%s</div></div>
 </div>
 
 <script>
@@ -1737,7 +1756,6 @@ new Chart(document.getElementById('sc'),{type:'bar',data:{labels:%s,datasets:[{l
         t_pb, t_brands, t_shops, t_loc,
         t_products, t_1688, t_1688_products, t_dyn,
         t_profit_calc,  # 利润计算器面板
-        t_quality,
         analysis_html,  # 格式化后的深度分析
         json.dumps(dim_names, ensure_ascii=False), json.dumps(dim_scores),
         max(dim_maxs),
